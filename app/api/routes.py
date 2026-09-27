@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import logging
 from typing import Optional
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 from app.document.pdf_processor import PDFProcessor
@@ -20,12 +20,15 @@ vector_manager = VectorStoreManager()
 
 
 class QueryRequest(BaseModel):
-    doc_id: str
+    doc_id: Optional[str] = None
     question: str
+    mode: Optional[str] = "auto"
+    conversation_id: Optional[str] = None
+    active_docs: Optional[list[str]] = None
 
 
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), conversation_id: Optional[str] = None):
     """Upload and process PDF document."""
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -38,12 +41,12 @@ async def upload_pdf(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, buffer)
 
         # Process PDF
-        result = pdf_processor.process_pdf(temp_path)
+        result = pdf_processor.process_pdf(temp_path, original_filename=file.filename)
         summary = result["summary"]
         chunks = result["chunks"]
 
-        # Index in ChromaDB
-        indexed_count = vector_manager.add_document_chunks(chunks)
+        # Index in ChromaDB with conversation_id scope
+        indexed_count = vector_manager.add_document_chunks(chunks, conversation_id=conversation_id)
 
         return {
             "status": "success",
@@ -62,12 +65,18 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @router.post("/query")
 async def query_document(payload: QueryRequest):
-    """Execute question against uploaded document via LangGraph workflow."""
-    if not payload.doc_id or not payload.question:
-        raise HTTPException(status_code=400, detail="Both 'doc_id' and 'question' are required.")
+    """Execute question via unified auto-routing LangGraph workflow."""
+    if not payload.question:
+        raise HTTPException(status_code=400, detail="'question' is required.")
 
     try:
-        response = run_documind_workflow(question=payload.question, doc_id=payload.doc_id)
+        response = run_documind_workflow(
+            question=payload.question,
+            doc_id=payload.doc_id,
+            mode=payload.mode or "auto",
+            conversation_id=payload.conversation_id,
+            active_docs=payload.active_docs
+        )
         return {
             "status": "success",
             "data": response

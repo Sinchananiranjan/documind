@@ -7,7 +7,10 @@ venv/
 .pytest_cache/
 .chroma/
 data/chroma_db/
+data/test_chroma_db/
+data/pdf_pages/
 uploads/
 *.pdf
 !.gitkeep
 .env
+scratch/

@@ -2,29 +2,32 @@
 
 DocuMind is an open-source, 100% local AI application designed to analyze multimodal PDF documents containing **text, scanned OCR pages, tables, and images**. 
 
-Built with **LangGraph**, **LangChain**, **FastAPI**, **Streamlit**, **PyMuPDF**, **Tesseract OCR**, **ChromaDB**, **Sentence Transformers**, and **Ollama**, DocuMind requires zero paid API keys and keeps all data locally on your computer.
+Optimized specifically for Windows systems with **8GB RAM, Intel i3 CPU, and zero GPU requirements**, DocuMind requires zero paid API keys and keeps all data locally on your computer.
 
 ---
 
-## 🏗️ Tech Stack & Architecture
+## 🚀 Key Improvements & Features
 
-- **Orchestration:** LangGraph (`StateGraph`, typed state, conditional routing, hallucination verification, automated retry loop)
-- **Framework & Models:** LangChain, SentenceTransformers (`all-MiniLM-L6-v2`), Ollama (`qwen2.5:3b` default, `qwen2.5:1.5b` fallback, `moondream` optional vision)
-- **Document Processing:** PyMuPDF (`fitz`), PyTesseract OCR, PyMuPDF `find_tables()`
-- **Vector Database:** ChromaDB (persistent local storage with metadata filtering)
-- **Backend & Frontend:** FastAPI (REST API), Streamlit (Interactive Web Dashboard)
-- **Dependency Management:** `uv`
+- **⚡ Fast Python Heuristic Router:** 0ms extra LLM latency for query classification (routes to `text_rag`, `table_analysis`, or `image_analysis`).
+- **🧮 Numerical & Formula Reasoning:** Handles mathematical calculations (e.g. SNR = $20 \log_{10}(S/N)$, $3.5\text{ mV} / 0.75\text{ mV} \approx 13.38\text{ dB}$) step-by-step using retrieved document values.
+- **📐 LaTeX Math Rendering:** Automatically formats math equations using standard LaTeX syntax.
+- **📄 Interactive Clickable Page Citations:** Click **"🔍 Click to open Page X in Viewer"** in citations to instantly open and view the exact rendered PDF page inside an interactive in-app page viewer.
+- **🛡️ Hallucination Verification Bug Fix:** Fallback responses (*"I couldn't find this in the document."*) correctly report `Grounded Verified: False`.
+- **⏱️ Performance Instrumentation:** Displays execution timing breakdown for retrieval, routing, LLM generation, and verification.
+- **🤖 Lightweight Model Stack:** Defaults to `qwen2.5:1.5b` (1.1GB RAM) with `all-MiniLM-L6-v2` embeddings (~90MB RAM on CPU).
 
-### 🔄 LangGraph Workflow Diagram
+---
+
+## 🔄 LangGraph Workflow Topology
 
 ```text
                [User Question + Doc ID]
                           │
-                   (retrieve_node)
-                          │  (fetches top-k chunks from ChromaDB)
-                    (router_node)
+                   (retrieve_node)       ──> [Top 3-5 Chunks from ChromaDB]
+                          │
+              (router_node - Fast Python)──> [0ms Classification]
                      ╱    │    ╲
-                    ╱     │     ╲  (conditional route based on query & context)
+                    ╱     │     ╲
                    v      v      v
            (text_rag) (table) (image)
                    ╲      │      ╱
@@ -33,89 +36,49 @@ Built with **LangGraph**, **LangChain**, **FastAPI**, **Streamlit**, **PyMuPDF**
                     (verify_answer) 
                        ╱     ╲
                       ╱       ╲
-            (is_grounded?)     (unverified / retries < 2)
+             (is_grounded)    (fallback / ungrounded)
                  │                    │
                  v                    v
-               [END]               (router)
-                                      │  (if max retries reached)
-                                      v
-                                  (fallback) ──> [END]
+               [END]               (fallback) ──> [END]
 ```
 
 ---
 
 ## ⚙️ Installation & Setup
 
-### 1. Prerequisites
-- Windows OS
-- Python 3.10+
-- `uv` package manager (`pip install uv` or `winget install astral-sh.uv`)
-- Ollama installed and running on Windows (`ollama --version`)
-- Tesseract OCR installed (default path: `C:\Program Files\Tesseract-OCR\tesseract.exe`)
-
-### 2. Install Project Dependencies with `uv`
-Run inside the project root directory:
-
+### 1. Install Dependencies with `uv`
 ```bash
 uv sync
 ```
 
-### 3. Pull Local Ollama LLM Model
-Ensure Ollama service is running, then pull the lightweight `qwen2.5:3b` model (or `qwen2.5:1.5b` fallback):
-
+### 2. Configure Groq API Key
+Copy `.env.example` to `.env` and set your Groq API Key:
 ```bash
-ollama pull qwen2.5:3b
-```
-
-*(Optional for Vision analysis)*:
-```bash
-ollama pull moondream
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 ---
 
 ## 🚀 Running DocuMind
 
-### Option A: Launch Streamlit App Directly (Recommended)
-You can run the Streamlit frontend directly without needing to launch FastAPI manually:
-
+### 1. Launch Streamlit Web UI (Recommended)
 ```bash
 uv run streamlit run frontend/streamlit_app.py
 ```
-Open your browser at `http://localhost:8501`.
+Open browser at `http://localhost:8501`.
 
-### Option B: Launch FastAPI Backend Server
-If you wish to interact via REST API or Swagger UI:
-
+### 2. Launch FastAPI Backend
 ```bash
 uv run uvicorn app.api.main:app --reload --port 8000
 ```
-Open Swagger docs at `http://127.0.0.1:8000/docs`.
+Open API docs at `http://127.0.0.1:8000/docs`.
 
 ---
 
-## 🧪 Testing & Data Generation
+## 🧪 Testing
 
-### 1. Generate Sample PDF
-Generate a multi-page test PDF containing text sections, a 4x4 benchmark table, and vector diagrams:
-
-```bash
-uv run python data/generate_sample.py
-```
-This generates `data/sample_document.pdf`. You can also generate this directly inside Streamlit using the sidebar button!
-
-### 2. Run Automated Test Suite
-Run the full pytest suite covering PDF processing, ChromaDB indexing, and LangGraph workflow state execution:
-
+### Run Full Pytest Suite
 ```bash
 uv run pytest
 ```
-
----
-
-## 💻 Hardware Optimizations for Windows (8GB RAM / Intel i3)
-
-1. **Lightweight Embeddings:** Uses `all-MiniLM-L6-v2` (~90MB RAM footprint on CPU).
-2. **Quantized Local LLM:** Default model `qwen2.5:3b` (~1.9GB RAM usage), smoothly running on 8GB RAM systems.
-3. **Graceful Vision Fallback:** If `moondream` vision model is not installed, image queries seamlessly fall back to OCR text extraction and image metadata descriptions without crashing.
-4. **Hallucination Protection:** If context is insufficient, the system returns: `"I couldn't find this in the document."`
+*Executes tests for Ollama detection, PDF parsing, ChromaDB indexing, fast routing, numerical formula calculation, and fallback verification.*
