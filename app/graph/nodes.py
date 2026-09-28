@@ -29,11 +29,24 @@ RELEVANCE_PARTIAL    = 0.20   # ≥ this → partial doc evidence → hybrid
 def _expand_query(question: str) -> List[str]:
     """
     Generate lightweight query variants for multi-query retrieval.
-    Handles multi-part questions, technical concepts, section queries, and action synonyms without LLM calls.
+    Handles multi-part questions, author queries, page queries, technical concepts, section queries, and action synonyms without LLM calls.
     """
     variants = [question]
     q = question.strip().rstrip("?")
     q_lower = q.lower()
+
+    # Author / Header Query Expansion
+    if any(w in q_lower for w in ["author", "authors", "who wrote", "written by", "creator", "publisher", "publication"]):
+        for auth_term in ["author", "authors", "written by", "by", "publication header"]:
+            if auth_term not in variants:
+                variants.append(auth_term)
+
+    # Page / Section Query Expansion
+    page_match = re.search(r'\b(?:page|section|chapter|part)\s*(\d+)\b', q_lower)
+    if page_match:
+        p_num = page_match.group(1)
+        variants.append(f"page {p_num}")
+        variants.append(f"section {p_num}")
 
     # Multi-part / Comparison / List sub-query decomposition
     split_patterns = r'\b(?:including|such as|like|cover|containing|with|explain|compare|difference between|versus|vs|as well as)\b|[,;\?\.]'
@@ -689,36 +702,40 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
     seen_ids = set()
     all_chunks = []
 
-    # If multiple target documents exist, perform balanced multi-document search across each doc
-    if len(target_docs) > 1:
-        for d_id in target_docs:
+    try:
+        # If multiple target documents exist, perform balanced multi-document search across each doc
+        if len(target_docs) > 1:
+            for d_id in target_docs:
+                for q in queries:
+                    results = vector_manager.search_similarity(
+                        query=q,
+                        conversation_id=conversation_id,
+                        doc_id=d_id,
+                        k=4,
+                        active_docs=[d_id]
+                    )
+                    for c in results:
+                        cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
+                        if cid not in seen_ids:
+                            seen_ids.add(cid)
+                            all_chunks.append(c)
+        else:
             for q in queries:
                 results = vector_manager.search_similarity(
                     query=q,
                     conversation_id=conversation_id,
-                    doc_id=d_id,
-                    k=4,
-                    active_docs=[d_id]
+                    doc_id=state.get("doc_id"),
+                    k=6,
+                    active_docs=target_docs
                 )
                 for c in results:
                     cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
                     if cid not in seen_ids:
                         seen_ids.add(cid)
                         all_chunks.append(c)
-    else:
-        for q in queries:
-            results = vector_manager.search_similarity(
-                query=q,
-                conversation_id=conversation_id,
-                doc_id=state.get("doc_id"),
-                k=6,
-                active_docs=target_docs
-            )
-            for c in results:
-                cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                if cid not in seen_ids:
-                    seen_ids.add(cid)
-                    all_chunks.append(c)
+    except Exception as e:
+        logger.error(f"[RETRIEVE] Vector store search or OCR retrieval failed: {e}")
+        all_chunks = []
 
     reranked = _rerank_chunks(search_query, all_chunks)
     
@@ -896,10 +913,15 @@ def _is_clear_general_knowledge_query(question: str) -> bool:
         
     q_lower = question.strip().lower()
     
+    # Document/Author specific terms prevent direct general knowledge routing
+    author_doc_terms = ["author", "authors", "creator", "paper", "pdf", "file", "document", "article", "report", "written by", "published by"]
+    if any(w in q_lower for w in author_doc_terms):
+        return False
+
     gk_concept_patterns = [
         r"^what\s+(?:is|are)\s+(?:photosynthesis|gravity|dna|rna|the\s+speed\s+of\s+light|quantum\s+mechanics|ai|machine\s+learning|blockchain|evolution|relativity|gradient\s+descent|a\s+neural\s+network|a\s+list|a\s+tuple|a\s+set|lists|tuples|sets)\b",
         r"^explain\s+(?:gradient\s+descent|photosynthesis|gravity|dna|quicksort|merge\s+sort|a\s+neural\s+network|recursion|backpropagation|overfitting|underfitting)\b",
-        r"^who\s+(?:wrote|composed|discovered|invented|built|created)\s+",
+        r"^who\s+(?:composed|discovered|invented|built|created)\s+(?:hamlet|relativity|the\s+lightbulb|telephone|python|c\+\+|java)\b",
         r"^what\s+is\s+the\s+capital\s+of\s+",
         r"^how\s+does\s+(?:gravity|photosynthesis|the\s+heart|the\s+sun|an\s+engine|wifi|gradient\s+descent|backpropagation)\s+work\b"
     ]
@@ -986,7 +1008,7 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     elif len(chunks) > 0 and not is_sufficient and doc_relevance < 0.15 and not _is_explicit_document_query(question):
         route = "general_knowledge"
 
-    # 9. Document Query Fallback (when documents are attached, route to text_rag so retrieve_node searches)
+    # 9. Document-First Default (when documents exist in active conversation, search documents first!)
     else:
         route = "text_rag"
 
@@ -1529,10 +1551,11 @@ def general_knowledge_node(state: DocuMindState) -> Dict[str, Any]:
     num_predict = _determine_max_tokens(state["question"])
     answer, metrics = llm_manager.generate_text_with_metrics(prompt, system_prompt=system_prompt, num_predict=num_predict)
 
-    if not answer or not answer.strip():
-        answer = "I couldn't generate an answer for this question."
-
-    answer = f"🌐 **[General Knowledge]**\n\n{answer}"
+    has_docs = bool(state.get("doc_id") or state.get("active_docs"))
+    if has_docs:
+        answer = f"🌐 **[General Knowledge Fallback]**\n\n*Note: This response is provided using general world knowledge:*\n\n{answer}"
+    else:
+        answer = f"🌐 **[General Knowledge]**\n\n{answer}"
 
     timings = state.get("timings", {})
     timings["llm"] = metrics.get("total_llm_time", round(time.perf_counter() - t0, 3))

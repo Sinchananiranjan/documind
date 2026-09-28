@@ -1,1 +1,733 @@
-{}
+{
+  "b22d83af-b7fb-4022-ae6c-1751233d406c": {
+    "id": "b22d83af-b7fb-4022-ae6c-1751233d406c",
+    "title": "New Conversation",
+    "timestamp": 1790568025.6504757,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568025.6504867,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568025.6517377,
+        "page_count": 5
+      }
+    ]
+  },
+  "b2eaca62-0aba-40f8-858c-319bda869a0b": {
+    "id": "b2eaca62-0aba-40f8-858c-319bda869a0b",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790568045.8299825,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "07ee2d92-6e66-4a80-9535-2d7c211b4df2": {
+    "id": "07ee2d92-6e66-4a80-9535-2d7c211b4df2",
+    "title": "New Conversation",
+    "timestamp": 1790568045.8396592,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568045.8396754,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568045.9336658,
+        "page_count": null
+      }
+    ]
+  },
+  "07f49f04-58c4-4e75-adc0-a8a089cfd2a5": {
+    "id": "07f49f04-58c4-4e75-adc0-a8a089cfd2a5",
+    "title": "New Conversation",
+    "timestamp": 1790568046.2928178,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568046.2928245,
+        "page_count": null
+      }
+    ]
+  },
+  "7f29e18e-09c9-4e16-9931-0faf196af8b0": {
+    "id": "7f29e18e-09c9-4e16-9931-0faf196af8b0",
+    "title": "New Conversation",
+    "timestamp": 1790568170.8716626,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568170.871674,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568170.8729362,
+        "page_count": 5
+      }
+    ]
+  },
+  "07441f0d-bc9f-453d-aa99-dff66c80186f": {
+    "id": "07441f0d-bc9f-453d-aa99-dff66c80186f",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790568184.0310874,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "25805154-1a03-4015-8c4d-43859cc652e0": {
+    "id": "25805154-1a03-4015-8c4d-43859cc652e0",
+    "title": "New Conversation",
+    "timestamp": 1790568184.0384843,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568184.0384922,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568184.0954764,
+        "page_count": null
+      }
+    ]
+  },
+  "09cc1191-8792-470e-9794-34bee14322d1": {
+    "id": "09cc1191-8792-470e-9794-34bee14322d1",
+    "title": "New Conversation",
+    "timestamp": 1790568184.2986693,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568184.298676,
+        "page_count": null
+      }
+    ]
+  },
+  "a717f79b-7e03-44dd-8578-12b53bda1db1": {
+    "id": "a717f79b-7e03-44dd-8578-12b53bda1db1",
+    "title": "New Conversation",
+    "timestamp": 1790568563.34833,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568563.3483417,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568563.3510375,
+        "page_count": 5
+      }
+    ]
+  },
+  "c35eb813-11c4-49a7-a84d-cdfd6988f412": {
+    "id": "c35eb813-11c4-49a7-a84d-cdfd6988f412",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790568575.067325,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "26400772-3ba7-4bfc-86ea-cbb2dde28a1e": {
+    "id": "26400772-3ba7-4bfc-86ea-cbb2dde28a1e",
+    "title": "New Conversation",
+    "timestamp": 1790568575.074704,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568575.0747116,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568575.1320105,
+        "page_count": null
+      }
+    ]
+  },
+  "a356fc46-8372-438a-b703-10570f2e5902": {
+    "id": "a356fc46-8372-438a-b703-10570f2e5902",
+    "title": "New Conversation",
+    "timestamp": 1790568575.3440022,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568575.3440094,
+        "page_count": null
+      }
+    ]
+  },
+  "d5787948-39bf-47cb-badc-0e92fcbd9b67": {
+    "id": "d5787948-39bf-47cb-badc-0e92fcbd9b67",
+    "title": "New Conversation",
+    "timestamp": 1790568808.530881,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568808.5308921,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568808.5326169,
+        "page_count": 5
+      }
+    ]
+  },
+  "2370bf6a-7848-4f4a-bc4e-53369a68638a": {
+    "id": "2370bf6a-7848-4f4a-bc4e-53369a68638a",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790568830.514384,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "86f0930d-4a1c-4326-bc6e-1b69702497eb": {
+    "id": "86f0930d-4a1c-4326-bc6e-1b69702497eb",
+    "title": "New Conversation",
+    "timestamp": 1790568830.5211897,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568830.5211942,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568830.5798135,
+        "page_count": null
+      }
+    ]
+  },
+  "02149593-48ec-4235-a2c8-dded061e8402": {
+    "id": "02149593-48ec-4235-a2c8-dded061e8402",
+    "title": "New Conversation",
+    "timestamp": 1790568830.7844815,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568830.7844858,
+        "page_count": null
+      }
+    ]
+  },
+  "e42dd046-caaa-4ffe-8f6b-e863b28375f5": {
+    "id": "e42dd046-caaa-4ffe-8f6b-e863b28375f5",
+    "title": "New Conversation",
+    "timestamp": 1790568967.9121902,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568967.9122062,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568967.916785,
+        "page_count": 5
+      }
+    ]
+  },
+  "20b27b7a-c24a-473e-839d-178c94548f0e": {
+    "id": "20b27b7a-c24a-473e-839d-178c94548f0e",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790568995.307602,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "2d314d42-d0db-487f-ab69-699825dfd4a0": {
+    "id": "2d314d42-d0db-487f-ab69-699825dfd4a0",
+    "title": "New Conversation",
+    "timestamp": 1790568995.3225343,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568995.3225515,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790568995.422802,
+        "page_count": null
+      }
+    ]
+  },
+  "35cb8d3c-bb94-43f7-887e-22ba87c79010": {
+    "id": "35cb8d3c-bb94-43f7-887e-22ba87c79010",
+    "title": "New Conversation",
+    "timestamp": 1790568995.9191494,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790568995.9191597,
+        "page_count": null
+      }
+    ]
+  },
+  "34b8d22e-c074-45d2-a5f8-07e942f2ec2f": {
+    "id": "34b8d22e-c074-45d2-a5f8-07e942f2ec2f",
+    "title": "Which two transport protocols ...",
+    "timestamp": 1790569005.0904758,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two transport protocols are mentioned in the network notes?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two transport protocols mentioned are **TCP** and **UDP**."
+      }
+    ],
+    "active_docs": [
+      "eval_doc_net",
+      "eval_doc_os"
+    ],
+    "documents": [
+      {
+        "doc_id": "eval_doc_net",
+        "filename": "Computer_Networks_Notes.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569005.0904925,
+        "page_count": 1
+      },
+      {
+        "doc_id": "eval_doc_os",
+        "filename": "Operating_Systems_Notes.pdf",
+        "upload_order": 2,
+        "timestamp": 1790569005.3003707,
+        "page_count": 1
+      }
+    ]
+  },
+  "f2d66648-dd2f-4a78-91f1-08827a27220f": {
+    "id": "f2d66648-dd2f-4a78-91f1-08827a27220f",
+    "title": "New Conversation",
+    "timestamp": 1790569005.0904832,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "eval_doc_chem"
+    ],
+    "documents": [
+      {
+        "doc_id": "eval_doc_chem",
+        "filename": "Chemistry_Lab_Report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569005.367913,
+        "page_count": 1
+      }
+    ]
+  },
+  "a62c63d5-f8c3-4d57-84b0-5905abddd4c6": {
+    "id": "a62c63d5-f8c3-4d57-84b0-5905abddd4c6",
+    "title": "New Conversation",
+    "timestamp": 1790569036.378129,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_a",
+      "doc_b"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_a",
+        "filename": "DocA.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569036.3781388,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_b",
+        "filename": "DocB.pdf",
+        "upload_order": 2,
+        "timestamp": 1790569036.3801003,
+        "page_count": null
+      }
+    ]
+  },
+  "767f2518-e05f-4e8c-b065-0c44d6f44a6d": {
+    "id": "767f2518-e05f-4e8c-b065-0c44d6f44a6d",
+    "title": "New Conversation",
+    "timestamp": 1790569036.7073526,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_secret_1"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_secret_1",
+        "filename": "Secret1.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569036.707362,
+        "page_count": null
+      }
+    ]
+  },
+  "5ee6129d-4b1c-466c-bbc4-24125be0dfb7": {
+    "id": "5ee6129d-4b1c-466c-bbc4-24125be0dfb7",
+    "title": "New Conversation",
+    "timestamp": 1790569036.7073576,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_public_2"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_public_2",
+        "filename": "Public2.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569036.708543,
+        "page_count": null
+      }
+    ]
+  },
+  "e2065d19-1bde-45ff-8611-7ca2f091f166": {
+    "id": "e2065d19-1bde-45ff-8611-7ca2f091f166",
+    "title": "New Conversation",
+    "timestamp": 1790569084.1437926,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_a",
+      "doc_b"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_a",
+        "filename": "DocA.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569084.1438036,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_b",
+        "filename": "DocB.pdf",
+        "upload_order": 2,
+        "timestamp": 1790569084.1459804,
+        "page_count": null
+      }
+    ]
+  },
+  "97eaae6d-89e6-4cdb-90d6-561beff19500": {
+    "id": "97eaae6d-89e6-4cdb-90d6-561beff19500",
+    "title": "New Conversation",
+    "timestamp": 1790569084.274522,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_secret_1"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_secret_1",
+        "filename": "Secret1.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569084.274542,
+        "page_count": null
+      }
+    ]
+  },
+  "5586fda7-3a23-42cf-9ced-5982bb176707": {
+    "id": "5586fda7-3a23-42cf-9ced-5982bb176707",
+    "title": "New Conversation",
+    "timestamp": 1790569084.274534,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_public_2"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_public_2",
+        "filename": "Public2.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569084.2764418,
+        "page_count": null
+      }
+    ]
+  },
+  "d689d10d-187e-40d7-818b-23a05ff94e1d": {
+    "id": "d689d10d-187e-40d7-818b-23a05ff94e1d",
+    "title": "New Conversation",
+    "timestamp": 1790569118.3280525,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_101",
+      "doc_102"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_101",
+        "filename": "annual_report.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569118.3280642,
+        "page_count": 10
+      },
+      {
+        "doc_id": "doc_102",
+        "filename": "budget_summary.pdf",
+        "upload_order": 2,
+        "timestamp": 1790569118.3305144,
+        "page_count": 5
+      }
+    ]
+  },
+  "4ecc64a4-3b89-480d-acec-70615e7b9fef": {
+    "id": "4ecc64a4-3b89-480d-acec-70615e7b9fef",
+    "title": "Which two Pandas functions are...",
+    "timestamp": 1790569137.397806,
+    "mode": "auto",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Which two Pandas functions are used for discretization?"
+      },
+      {
+        "role": "assistant",
+        "content": "The two main discretization functions are **cut()** and **qcut()**."
+      }
+    ],
+    "active_docs": [],
+    "documents": []
+  },
+  "600528e1-c2b9-4367-b5b6-0202a23f5fd0": {
+    "id": "600528e1-c2b9-4367-b5b6-0202a23f5fd0",
+    "title": "New Conversation",
+    "timestamp": 1790569137.407077,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3",
+      "doc_mod_5"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569137.4070826,
+        "page_count": null
+      },
+      {
+        "doc_id": "doc_mod_5",
+        "filename": "Module_5.pdf",
+        "upload_order": 2,
+        "timestamp": 1790569137.4724693,
+        "page_count": null
+      }
+    ]
+  },
+  "d0bb19ba-6d5a-48b3-bd34-36bfb2daa41b": {
+    "id": "d0bb19ba-6d5a-48b3-bd34-36bfb2daa41b",
+    "title": "New Conversation",
+    "timestamp": 1790569137.7549968,
+    "mode": "auto",
+    "messages": [],
+    "active_docs": [
+      "doc_mod_3"
+    ],
+    "documents": [
+      {
+        "doc_id": "doc_mod_3",
+        "filename": "Module_3.pdf",
+        "upload_order": 1,
+        "timestamp": 1790569137.755004,
+        "page_count": null
+      }
+    ]
+  }
+}
