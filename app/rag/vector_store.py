@@ -106,7 +106,7 @@ class VectorStoreManager:
         query: str,
         conversation_id: Optional[str] = None,
         doc_id: Optional[str] = None,
-        k: int = 3,  # Default reduced from 4 → 3 for speed
+        k: int = 8,  # Default k: retrieve more candidates for better coverage
         filter_type: Optional[str] = None,
         active_docs: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
@@ -206,4 +206,67 @@ class VectorStoreManager:
             return list(doc_ids)
         except Exception as e:
             logger.warning(f"Could not list documents: {e}")
+            return []
+
+    def get_all_chunks_for_docs(
+        self,
+        active_docs: List[str],
+        conversation_id: Optional[str] = None,
+        max_chunks: int = 120
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve ALL stored chunks for the given active_docs by metadata filter only
+        (no embedding search). Used as a lexical/exhaustive fallback so semantic search
+        gaps don't silently miss content that is present but not top-k similar.
+
+        Returns up to max_chunks chunks with synthesized score=0.5 for compatibility.
+        """
+        try:
+            collection = self.vector_store._collection
+            conditions = []
+            if active_docs:
+                if len(active_docs) == 1:
+                    conditions.append({"doc_id": active_docs[0]})
+                else:
+                    conditions.append({"doc_id": {"$in": active_docs}})
+            if conversation_id:
+                conditions.append({"conversation_id": conversation_id})
+
+            where_clause = {}
+            if len(conditions) == 1:
+                where_clause = conditions[0]
+            elif len(conditions) > 1:
+                where_clause = {"$and": conditions}
+
+            kwargs = {"include": ["documents", "metadatas"]}
+            if where_clause:
+                kwargs["where"] = where_clause
+
+            raw = collection.get(**kwargs)
+            docs = raw.get("documents") or []
+            metas = raw.get("metadatas") or []
+
+            results = []
+            for content, meta in zip(docs, metas):
+                if not content or not meta:
+                    continue
+                results.append({
+                    "doc_id": meta.get("doc_id", "unknown"),
+                    "filename": meta.get("filename", ""),
+                    "page_num": meta.get("page_num", 1),
+                    "chunk_type": meta.get("chunk_type", "text"),
+                    "chunk_id": meta.get("chunk_id", ""),
+                    "content": content,
+                    "snippet": content[:160] + "..." if len(content) > 160 else content,
+                    "score": 0.5,  # Neutral placeholder for compatibility
+                    "image_b64": meta.get("image_b64", "")
+                })
+
+            # Sort by page order for sequential coverage
+            results.sort(key=lambda x: (x.get("doc_id", ""), x.get("page_num", 1)))
+            logger.info(f"[LEXICAL FETCH] Retrieved {len(results)} total chunks for docs={active_docs}")
+            return results[:max_chunks]
+
+        except Exception as e:
+            logger.error(f"[LEXICAL FETCH] Failed to fetch all chunks for docs {active_docs}: {e}")
             return []

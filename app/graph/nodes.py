@@ -662,7 +662,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
             "timings": timings
         }
 
-    if mode == "general_knowledge_mode" or (not state.get("doc_id") and not state.get("active_docs")):
+    if mode == "general_knowledge_mode":
         timings = state.get("timings", {})
         timings["retrieval"] = 0.0
         return {
@@ -704,6 +704,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
 
     try:
         # If multiple target documents exist, perform balanced multi-document search across each doc
+        # Use k=10 per-query per-doc to maximise coverage before reranking
         if len(target_docs) > 1:
             for d_id in target_docs:
                 for q in queries:
@@ -711,7 +712,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
                         query=q,
                         conversation_id=conversation_id,
                         doc_id=d_id,
-                        k=4,
+                        k=10,
                         active_docs=[d_id]
                     )
                     for c in results:
@@ -725,7 +726,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
                     query=q,
                     conversation_id=conversation_id,
                     doc_id=state.get("doc_id"),
-                    k=6,
+                    k=12,
                     active_docs=target_docs
                 )
                 for c in results:
@@ -738,6 +739,32 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         all_chunks = []
 
     reranked = _rerank_chunks(search_query, all_chunks)
+
+    # ── Lexical / Exhaustive Fallback ────────────────────────────────────────
+    # When semantic search returns zero or weak results (top score < RELEVANCE_PARTIAL),
+    # fetch ALL stored chunks for the active docs by metadata filter and rerank them
+    # lexically. This ensures we never miss content that is present in the doc but
+    # not top-k similar to the query embedding.
+    top_sem_score = reranked[0]["combined_score"] if reranked else 0.0
+    if target_docs and top_sem_score < RELEVANCE_PARTIAL:
+        logger.info(
+            f"[RETRIEVE] Semantic score {top_sem_score:.3f} < {RELEVANCE_PARTIAL:.2f} threshold. "
+            f"Running exhaustive lexical scan over {target_docs}."
+        )
+        all_lexical = vector_manager.get_all_chunks_for_docs(
+            active_docs=target_docs, conversation_id=conversation_id, max_chunks=200
+        )
+        # Rerank the full document corpus lexically against the expanded query
+        lex_reranked = _rerank_chunks(search_query, all_lexical)
+        # Merge: keep semantic results and add lexical hits not already in set
+        for c in lex_reranked:
+            cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                reranked.append(c)
+        # Re-sort the merged pool by combined_score
+        reranked.sort(key=lambda x: x.get("combined_score", 0.0), reverse=True)
+        logger.info(f"[RETRIEVE] After lexical merge: {len(reranked)} candidate chunks.")
     
     # Ensure chunk representation across all target docs when multiple docs exist
     if len(target_docs) > 1:
@@ -805,14 +832,33 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
 
     doc_relevance = top_chunks[0]["combined_score"] if top_chunks else 0.0
     sufficiency = _evaluate_evidence_sufficiency(question, top_chunks)
-    logger.info(f"[RETRIEVE] {len(top_chunks)} chunks selected, doc_relevance={doc_relevance}, sufficiency={sufficiency['is_sufficient']}")
+    logger.info(f"[RETRIEVE] {len(top_chunks)} chunks selected, doc_relevance={doc_relevance:.3f}, sufficiency={sufficiency['is_sufficient']}")
+
+    # ── Post-retrieval GK re-route guard ────────────────────────────────────
+    # CRITICAL: Only re-route to general_knowledge when there are NO active docs in the
+    # conversation. If the user has uploaded documents, we MUST attempt to answer from
+    # those documents, even if semantic similarity is low. Low similarity may simply mean
+    # the embedding model chose a different surface form, not that the doc lacks the info.
+    has_active_docs_in_state = bool(state.get("doc_id") or state.get("active_docs"))
 
     initial_route = state.get("route", "text_rag")
 
-    # Post-retrieval route adjustment: ONLY for general text_rag queries, if evidence is insufficient for an independent query, adjust route to general_knowledge
+    # Post-retrieval route adjustment: re-route to general_knowledge ONLY when there are
+    # genuinely NO active documents in this conversation AND evidence is minimal.
+    # When docs ARE attached, always proceed to text_rag for a final document-grounded attempt.
     is_insufficient_evidence = not sufficiency.get("is_sufficient") and not sufficiency.get("is_partial")
-    if initial_route == "text_rag" and (doc_relevance < 0.15 or (is_insufficient_evidence and doc_relevance < 0.22)) and not _is_explicit_document_query(question) and state.get("mode", "auto") == "auto":
-        logger.info(f"[RETRIEVE] Document evidence is insufficient (rel={doc_relevance:.3f}, coverage={sufficiency.get('key_term_coverage', 0.0):.2f}) for independent query. Adjusting route to general_knowledge.")
+    if (
+        not has_active_docs_in_state
+        and initial_route == "text_rag"
+        and doc_relevance < 0.15
+        and is_insufficient_evidence
+        and not _is_explicit_document_query(question)
+        and state.get("mode", "auto") == "auto"
+    ):
+        logger.info(
+            f"[RETRIEVE] No docs in conversation and evidence score={doc_relevance:.3f} is minimal. "
+            "Adjusting route → general_knowledge."
+        )
         retrieval_time = round(time.perf_counter() - t0, 3)
         timings = state.get("timings", {})
         timings["retrieval"] = retrieval_time
@@ -996,16 +1042,17 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     elif _needs_gk_web_search(question) and (not has_docs or len(chunks) > 0):
         route = "web_search"
 
-    # 6. Clear World Knowledge Query (e.g. "Who invented Python?", "What is photosynthesis?")
-    elif _is_clear_general_knowledge_query(question):
+    # 6. Clear World Knowledge Query — ONLY when no documents are attached
+    # When docs are present, we MUST always try to answer from the document first.
+    elif _is_clear_general_knowledge_query(question) and not has_docs:
         route = "general_knowledge"
 
     # 7. If no documents are attached to the conversation
     elif not has_docs:
         route = "general_knowledge"
 
-    # 8. If retrieve_node ran and doc_relevance is low for an independent query:
-    elif len(chunks) > 0 and not is_sufficient and doc_relevance < 0.15 and not _is_explicit_document_query(question):
+    # 7. If retrieve_node ran and doc_relevance is low — only route to GK when NO docs attached
+    elif len(chunks) > 0 and not is_sufficient and doc_relevance < 0.15 and not _is_explicit_document_query(question) and not has_docs:
         route = "general_knowledge"
 
     # 9. Document-First Default (when documents exist in active conversation, search documents first!)
@@ -1070,21 +1117,25 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         timings["llm"] = 0.0
 
         mode = state.get("mode", "auto")
-        # If mode is auto AND question does NOT explicitly reference document, fall back cleanly to General Knowledge
-        if mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
-            logger.info("[TEXT_RAG] Evidence insufficient for independent query in auto mode. Falling back to General Knowledge.")
-            return general_knowledge_node(state)
-
         active_docs = state.get("active_docs") or []
         doc_id = state.get("doc_id")
         has_docs = bool(active_docs) or bool(doc_id)
 
         if not has_docs:
             msg = "No document has been uploaded to this conversation yet. Please upload a PDF to ask document-specific questions."
-        else:
-            msg = "The selected document does not provide information about this topic."
+            return {"answer": msg, "verified": False, "timings": timings}
+
+        # In auto mode, if retrieval yields no relevant chunks (topic absent from doc),
+        # fall through to General Knowledge as a final resort — but with a clear GK label.
+        # The document WAS searched (retrieve_node ran) — we just got no usable evidence.
+        # In document_mode, stay strict: report "not in document" without calling GK.
+        if mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
+            logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge (with label).")
+            return general_knowledge_node(state)
+
+        # document_mode: strict — no GK fallback
         return {
-            "answer": msg,
+            "answer": "The selected document does not provide information about this topic.",
             "verified": False,
             "timings": timings
         }
@@ -1114,8 +1165,17 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
 
     missing_indicators = ["does not provide information", "not mentioned in", "no information about", "not provided in"]
     mode = state.get("mode", "auto")
-    if (not answer or not answer.strip() or any(ind in answer.lower() for ind in missing_indicators)) and mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
-        logger.info("[TEXT_RAG] Document text does not contain info for independent query. Falling back to General Knowledge.")
+    has_docs_now = bool(state.get("active_docs") or state.get("doc_id"))
+    # After checking the document, if the LLM confirms the topic is absent from the doc,
+    # fall through to General Knowledge as a final resort. This preserves the user's
+    # requirement: "check the document first, use GK only when document truly lacks the info."
+    # The GK answer will be clearly labeled with 🌐 **[General Knowledge Fallback]** prefix.
+    if (
+        (not answer or not answer.strip() or any(ind in answer.lower() for ind in missing_indicators))
+        and mode == "auto"
+        and not _is_explicit_document_query(state.get("question", ""))
+    ):
+        logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to General Knowledge (with label).")
         return general_knowledge_node(state)
 
     if not answer or not answer.strip():
