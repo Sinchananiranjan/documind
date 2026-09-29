@@ -901,7 +901,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         }
 
     # Check if query needs web search (for recency / 2026 data or external web intent)
-    if _needs_gk_web_search(question):
+    if _needs_gk_web_search(question) and not _is_explicit_document_query(question):
         logger.info(f"[RETRIEVE] Query requires web search. Routing to web_search with {len(top_chunks)} document chunks.")
         retrieval_time = round(time.perf_counter() - t0, 3)
         timings = state.get("timings", {})
@@ -1033,8 +1033,10 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     elif len(chunks) > 0 and chunks[0].get("chunk_type") == "table" and ("value" in q_lower or "list" in q_lower or "data" in q_lower or "row" in q_lower or "column" in q_lower):
         route = "table_analysis"
 
-    # 4. Explicit Document Mode or Sufficient Document Evidence
+    # 4. Explicit Document Mode or Sufficient Document Evidence or Explicit Document Request
     elif mode == "document_mode":
+        route = "text_rag"
+    elif has_docs and _is_explicit_document_query(question):
         route = "text_rag"
     elif is_sufficient or (len(chunks) > 0 and sufficiency.get("is_partial", False)):
         route = "text_rag"

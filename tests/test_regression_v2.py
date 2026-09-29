@@ -1,4 +1,4 @@
-﻿"""
+"""
 Regression test suite v2 — tests the 8 specific scenarios requested.
 
 Tests are isolated from each other and mock only what is necessary.
@@ -232,3 +232,22 @@ def test_08_verified_true_only_with_passing_verification():
         f"Hallucinated answer citing non-existent page 99 must NOT be verified=True. "
         f"Got verified={res['verified']}, answer='{res['answer'][:100]}'"
     )
+def test_09_explicit_document_query_blocks_web_search():
+    """9. Explicit document query must block web search and route to text_rag."""
+    chunk = _make_chunk(
+        page_num=20,
+        content="There are 5,120 syntactically distinct hypotheses and 973 semantically distinct hypotheses.",
+        combined_score=0.88,
+    )
+    res = _run(
+        question="According to the uploaded PDF, how many syntactically versus semantically distinct hypotheses are there?",
+        chunks=[chunk],
+        llm_answer="According to the document, there are 5,120 syntactically distinct hypotheses and 973 semantically distinct hypotheses [Page 20].",
+    )
+    # The phrasing might normally trigger web search or GK because of complex vocabulary,
+    # but "According to the uploaded PDF" MUST force document routing.
+    assert res["route"] in ("text_rag", "table_analysis", "hybrid"), (
+        f"Explicit doc query must route to document node, got '{res['route']}'"
+    )
+    assert res["verified"] is True, "Answer should pass verification"
+    assert "5,120" in res["answer"], "Must contain exact counts"
