@@ -751,20 +751,23 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
             f"[RETRIEVE] Semantic score {top_sem_score:.3f} < {RELEVANCE_PARTIAL:.2f} threshold. "
             f"Running exhaustive lexical scan over {target_docs}."
         )
-        all_lexical = vector_manager.get_all_chunks_for_docs(
-            active_docs=target_docs, conversation_id=conversation_id, max_chunks=200
-        )
-        # Rerank the full document corpus lexically against the expanded query
-        lex_reranked = _rerank_chunks(search_query, all_lexical)
-        # Merge: keep semantic results and add lexical hits not already in set
-        for c in lex_reranked:
-            cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-            if cid not in seen_ids:
-                seen_ids.add(cid)
-                reranked.append(c)
-        # Re-sort the merged pool by combined_score
-        reranked.sort(key=lambda x: x.get("combined_score", 0.0), reverse=True)
-        logger.info(f"[RETRIEVE] After lexical merge: {len(reranked)} candidate chunks.")
+        try:
+            all_lexical = vector_manager.get_all_chunks_for_docs(
+                active_docs=target_docs, conversation_id=conversation_id, max_chunks=200
+            )
+            # Rerank the full document corpus lexically against the expanded query
+            lex_reranked = _rerank_chunks(search_query, all_lexical)
+            # Merge: keep semantic results and add lexical hits not already in set
+            for c in lex_reranked:
+                cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
+                if cid not in seen_ids:
+                    seen_ids.add(cid)
+                    reranked.append(c)
+            # Re-sort the merged pool by combined_score
+            reranked.sort(key=lambda x: x.get("combined_score", 0.0), reverse=True)
+            logger.info(f"[RETRIEVE] After lexical merge: {len(reranked)} candidate chunks.")
+        except Exception as lex_err:
+            logger.warning(f"[RETRIEVE] Lexical fallback scan failed (non-fatal): {lex_err}")
     
     # Ensure chunk representation across all target docs when multiple docs exist
     if len(target_docs) > 1:
@@ -1123,15 +1126,18 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
 
         if not has_docs:
             msg = "No document has been uploaded to this conversation yet. Please upload a PDF to ask document-specific questions."
-            return {"answer": msg, "verified": False, "timings": timings}
+            return {"answer": msg, "verified": False, "route": "general_knowledge", "timings": timings}
 
         # In auto mode, if retrieval yields no relevant chunks (topic absent from doc),
         # fall through to General Knowledge as a final resort — but with a clear GK label.
         # The document WAS searched (retrieve_node ran) — we just got no usable evidence.
+        # IMPORTANT: update route → 'general_knowledge' so the UI label is honest.
         # In document_mode, stay strict: report "not in document" without calling GK.
         if mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
             logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge (with label).")
-            return general_knowledge_node(state)
+            gk_result = general_knowledge_node(state)
+            gk_result["route"] = "general_knowledge"  # Ensure honest route label
+            return gk_result
 
         # document_mode: strict — no GK fallback
         return {
@@ -1176,7 +1182,9 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         and not _is_explicit_document_query(state.get("question", ""))
     ):
         logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to General Knowledge (with label).")
-        return general_knowledge_node(state)
+        gk_result = general_knowledge_node(state)
+        gk_result["route"] = "general_knowledge"  # Ensure honest route label in state & UI
+        return gk_result
 
     if not answer or not answer.strip():
         answer = "The selected document does not provide information about this topic."
@@ -1188,7 +1196,8 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
     timings["tokens_generated"] = metrics.get("tokens_generated", 0)
     timings["tokens_per_sec"] = metrics.get("tokens_per_sec", 0.0)
 
-    return {"answer": answer, "timings": timings}
+    # Leave verified unset here — verify_answer_node will evaluate it
+    return {"answer": answer, "verified": False, "timings": timings}
 
 
 # ============================================================================
@@ -1657,10 +1666,19 @@ def verify_answer_node(state: DocuMindState) -> Dict[str, Any]:
         return {"verified": not is_fallback, "timings": timings}
 
     # 2. General Knowledge Route Verification
-    if route == "general_knowledge":
+    # Also catch answers with 🌐 GK prefix even if route says 'text_rag'
+    # (this happens when text_rag_node falls through to GK but route isn't updated in state)
+    is_gk_answer = (
+        route == "general_knowledge"
+        or answer.startswith("🌐 **[General Knowledge")
+        or answer.startswith("🌐 **[General Knowledge Fallback")
+    )
+    if is_gk_answer:
         timings = state.get("timings", {})
         timings["verification"] = round(time.perf_counter() - t0, 4)
-        return {"verified": not is_fallback, "timings": timings}
+        # GK verification: non-empty and not a fallback phrase
+        is_valid_gk = bool(answer and answer.strip()) and not is_fallback
+        return {"verified": is_valid_gk, "timings": timings}
 
     # 3. Web Search Route Verification
     if route in ("web_search", "web_enhanced_answer"):
@@ -1676,16 +1694,30 @@ def verify_answer_node(state: DocuMindState) -> Dict[str, Any]:
 
     if route in ("text_rag", "table_analysis", "image_analysis", "hybrid"):
         if chunks:
-            # Assemble combined context from all retrieved chunks + OCR text + question intent
+            # Assemble combined context from chunk content ONLY — do NOT include the question
+            # because question terms would create false positives in grounding checks.
             context_parts = [c.get("content", "").lower() for c in chunks]
-            if state.get("question"):
-                context_parts.append(state["question"].lower())
             if state.get("uploaded_image_ocr"):
                 context_parts.append(state["uploaded_image_ocr"].lower())
             context_text = " ".join(context_parts)
 
             context_words = set(re.findall(r'\b\w+\b', context_text))
             context_stems = {_stem_word(cw) for cw in context_words}
+
+            # ── Page citation validation ─────────────────────────────────────
+            # Cited page numbers in the answer must exist in retrieved chunks.
+            chunk_pages = {str(c.get("page_num", 0)) for c in chunks}
+            cited_pages = re.findall(r'\[Page\s+(\d+)\]', answer, re.IGNORECASE)
+            if cited_pages:
+                invalid_citations = [p for p in cited_pages if p not in chunk_pages]
+                if invalid_citations and len(invalid_citations) / len(cited_pages) > 0.5:
+                    logger.warning(
+                        f"[VERIFY] Cited pages {invalid_citations} not in retrieved chunks "
+                        f"(chunk pages: {chunk_pages}). Marking unverified."
+                    )
+                    timings = state.get("timings", {})
+                    timings["verification"] = round(time.perf_counter() - t0, 4)
+                    return {"verified": False, "timings": timings}
 
             # 1. Hallucinated / Invented Lifecycle Stages & Steps check
             invented_candidate_stages = [
@@ -1747,6 +1779,13 @@ def verify_answer_node(state: DocuMindState) -> Dict[str, Any]:
                     timings = state.get("timings", {})
                     timings["verification"] = round(time.perf_counter() - t0, 4)
                     return {"verified": False, "timings": timings}
+
+        else:
+            # No chunks retrieved — doc-grounded routes without context cannot be verified
+            logger.warning("[VERIFY] Route is doc-grounded but no chunks retrieved. Marking unverified.")
+            timings = state.get("timings", {})
+            timings["verification"] = round(time.perf_counter() - t0, 4)
+            return {"verified": False, "timings": timings}
 
     timings = state.get("timings", {})
     timings["verification"] = round(time.perf_counter() - t0, 4)
