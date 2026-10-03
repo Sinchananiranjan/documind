@@ -251,3 +251,29 @@ def test_09_explicit_document_query_blocks_web_search():
     )
     assert res["verified"] is True, "Answer should pass verification"
     assert "5,120" in res["answer"], "Must contain exact counts"
+
+
+def test_10_explicit_document_query_strict_wording():
+    """10. Explicit document queries lacking evidence must return the exact strict wording."""
+    # Chunk contains irrelevant info to ensure failure
+    chunk = _make_chunk(page_num=1, content="This document is about gardening.", combined_score=0.10)
+    res = _run(
+        question="According to the uploaded PDF, what is gradient descent?",
+        chunks=[chunk],
+        llm_answer="The selected document does not provide information about this topic." # simulating old LLM behavior
+    )
+    assert res["route"] == "text_rag", f"Must stay text_rag, got {res['route']}"
+    assert res["verified"] is False
+    assert "uploaded document does not contain enough information" in res["answer"], f"Expected strict phrase, got {res['answer']}"
+
+
+def test_11_mixed_query_routes_to_hybrid():
+    """11. Mixed query (explicit document + external request) routes to hybrid node."""
+    chunk = _make_chunk(page_num=5, content="Version space is the subset of hypotheses that are consistent with the training examples.", combined_score=0.85)
+    res = _run(
+        question="What does the PDF say about version space, and compare it with the latest modern machine learning?",
+        chunks=[chunk],
+        llm_answer="According to the document [Page 5], Version space is... 📚 General Knowledge: Modern machine learning focuses on..."
+    )
+    assert res["route"] == "hybrid", f"Expected hybrid, got {res['route']}"
+    assert res["verified"] is True

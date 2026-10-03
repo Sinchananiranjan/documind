@@ -846,13 +846,12 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
 
     initial_route = state.get("route", "text_rag")
 
-    # Post-retrieval route adjustment: re-route to general_knowledge ONLY when there are
-    # genuinely NO active documents in this conversation AND evidence is minimal.
-    # When docs ARE attached, always proceed to text_rag for a final document-grounded attempt.
+    # Post-retrieval route adjustment: re-route to general_knowledge when evidence is genuinely
+    # minimal AND the user did not explicitly demand document grounding.
+    # The document WAS searched (retrieve_node executed), but no usable evidence was found.
     is_insufficient_evidence = not sufficiency.get("is_sufficient") and not sufficiency.get("is_partial")
     if (
-        not has_active_docs_in_state
-        and initial_route == "text_rag"
+        initial_route == "text_rag"
         and doc_relevance < 0.15
         and is_insufficient_evidence
         and not _is_explicit_document_query(question)
@@ -901,13 +900,19 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         }
 
     # Check if query needs web search (for recency / 2026 data or external web intent)
-    if _needs_gk_web_search(question) and not _is_explicit_document_query(question):
-        logger.info(f"[RETRIEVE] Query requires web search. Routing to web_search with {len(top_chunks)} document chunks.")
+    if _needs_gk_web_search(question):
+        if _is_explicit_document_query(question) and len(top_chunks) > 0:
+            logger.info("[RETRIEVE] Query is explicitly doc-grounded but needs web search/GK. Routing to hybrid.")
+            route = "hybrid"
+        else:
+            logger.info(f"[RETRIEVE] Query requires web search. Routing to web_search with {len(top_chunks)} document chunks.")
+            route = "web_search"
+            
         retrieval_time = round(time.perf_counter() - t0, 3)
         timings = state.get("timings", {})
         timings["retrieval"] = retrieval_time
         return {
-            "route": "web_search",
+            "route": route,
             "context_chunks": top_chunks,
             "sources": sources,
             "doc_relevance": doc_relevance,
@@ -1136,14 +1141,23 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         # IMPORTANT: update route → 'general_knowledge' so the UI label is honest.
         # In document_mode, stay strict: report "not in document" without calling GK.
         if mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
-            logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge (with label).")
-            gk_result = general_knowledge_node(state)
-            gk_result["route"] = "general_knowledge"  # Ensure honest route label
-            return gk_result
+            if _needs_gk_web_search(state.get("question", "")):
+                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to Web Search.")
+                # We must manually chain the nodes since we're bypassing LangGraph's edges
+                ws_state = web_search_node(state)
+                state.update(ws_state)
+                we_result = web_enhanced_answer_node(state)
+                we_result["route"] = "web_search"
+                return we_result
+            else:
+                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge (with label).")
+                gk_result = general_knowledge_node(state)
+                gk_result["route"] = "general_knowledge"  # Ensure honest route label
+                return gk_result
 
         # document_mode: strict — no GK fallback
         return {
-            "answer": "The selected document does not provide information about this topic.",
+            "answer": "The uploaded document does not contain enough information to answer this.",
             "verified": False,
             "timings": timings
         }
@@ -1159,7 +1173,7 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         "4. For comparison, difference, or common-topic questions: analyze ONLY properties directly supported by retrieved context for each entity/document. Explicitly state which document covers a concept and which does not. Do NOT invent generic shared topics or external textbook properties absent from the document context.\n"
         "5. Answer the exact question concisely using the minimum sufficient evidence. Avoid repetitive explanations.\n"
         "6. Cite page numbers for every claim (e.g., '[Page X]').\n"
-        "7. If the requested concept or detail is NOT mentioned in the DOCUMENT CONTEXT, explicitly state: 'The selected document does not provide information about this topic.'"
+        "7. If the requested concept or detail is NOT mentioned in the DOCUMENT CONTEXT, explicitly state: 'The uploaded document does not contain enough information to answer this.'"
     )
 
     prompt = (
@@ -1171,7 +1185,7 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
     num_predict = _determine_max_tokens(state["question"])
     answer, metrics = llm_manager.generate_text_with_metrics(prompt, system_prompt=system_prompt, num_predict=num_predict)
 
-    missing_indicators = ["does not provide information", "not mentioned in", "no information about", "not provided in"]
+    missing_indicators = ["does not contain enough information", "does not provide information", "not mentioned in", "no information about", "not provided in"]
     mode = state.get("mode", "auto")
     has_docs_now = bool(state.get("active_docs") or state.get("doc_id"))
     # After checking the document, if the LLM confirms the topic is absent from the doc,
@@ -1183,13 +1197,21 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         and mode == "auto"
         and not _is_explicit_document_query(state.get("question", ""))
     ):
-        logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to General Knowledge (with label).")
-        gk_result = general_knowledge_node(state)
-        gk_result["route"] = "general_knowledge"  # Ensure honest route label in state & UI
-        return gk_result
+        if _needs_gk_web_search(state.get("question", "")):
+            logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to Web Search.")
+            ws_state = web_search_node(state)
+            state.update(ws_state)
+            we_result = web_enhanced_answer_node(state)
+            we_result["route"] = "web_search"
+            return we_result
+        else:
+            logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to General Knowledge (with label).")
+            gk_result = general_knowledge_node(state)
+            gk_result["route"] = "general_knowledge"  # Ensure honest route label in state & UI
+            return gk_result
 
     if not answer or not answer.strip():
-        answer = "The selected document does not provide information about this topic."
+        answer = "The uploaded document does not contain enough information to answer this."
 
     timings = state.get("timings", {})
     timings["llm"] = metrics.get("total_llm_time", round(time.perf_counter() - t0, 3))
@@ -1801,12 +1823,12 @@ def fallback_node(state: DocuMindState) -> Dict[str, Any]:
     """Returns structured fallback when document information is missing."""
     logger.warning("[FALLBACK] Information missing from document.")
     ans = state.get("answer", "")
-    if ans and ("no document has been uploaded" in ans.lower() or "does not provide information" in ans.lower()):
+    if ans and "no document has been uploaded" in ans.lower():
         return {
             "answer": ans,
             "verified": False
         }
     return {
-        "answer": "I couldn't find enough information about this in the selected document.",
+        "answer": "The uploaded document does not contain enough information to answer this.",
         "verified": False
     }
