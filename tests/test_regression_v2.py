@@ -58,7 +58,7 @@ def _run(question, chunks, mode="auto", doc_id="test_doc", active_docs=None, llm
                     mode=mode,
                 )
                 print("[_RUN DEBUG] RESULT ROUTE:", res.get("route"))
-                print("[_RUN DEBUG] RESULT ANSWER:", repr(res.get("answer")))
+                print("[_RUN DEBUG] RESULT ANSWER:", repr(res.get("answer")).encode('ascii', errors='backslashreplace').decode('ascii'))
                 print("[_RUN DEBUG] RESULT KEYS:", list(res.keys()))
                 return res
         else:

@@ -92,8 +92,17 @@ def _extract_concepts(question: str) -> List[str]:
     """
     Extract multi-word technical concepts, hyphenated terms, capitalized phrases,
     section/module references (e.g. Module 5), numbers, and distinct keywords.
+    Filter stop words so concept matches represent actual domain concepts.
     """
     q_clean = question.strip().rstrip("?")
+
+    stop_words = {
+        "what", "who", "why", "when", "where", "how", "is", "are", "was", "were",
+        "does", "do", "did", "the", "a", "an", "explain", "describe", "define",
+        "list", "tell", "give", "show", "find", "which", "their", "its", "in", "of",
+        "and", "or", "for", "to", "be", "not", "with", "that", "this", "these", "from",
+        "pdf", "document", "file", "textbook", "page", "according", "based", "uploaded"
+    }
     
     # 1. Hyphenated terms (e.g. 'single-bit', 'parity-check', 'linear-programming')
     hyphen_terms = [t.lower() for t in re.findall(r'\b\w+(?:-\w+)+\b', q_clean)]
@@ -105,7 +114,10 @@ def _extract_concepts(question: str) -> List[str]:
     acronyms = [a.lower() for a in re.findall(r'\b[A-Z0-9]{2,8}\b', question)]
 
     # 4. Key Noun phrases (preserve single/double digit numbers or digit-containing tokens)
-    words = [w for w in re.sub(r'[^\w\s-]', ' ', q_clean.lower()).split() if len(w) > 2 or w.isdigit() or re.search(r'\d', w)]
+    words = [
+        w for w in re.sub(r'[^\w\s-]', ' ', q_clean.lower()).split()
+        if (len(w) > 2 or w.isdigit() or re.search(r'\d', w)) and w.lower() not in stop_words
+    ]
     bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)] if len(words) >= 2 else []
 
     concepts = list(set(hyphen_terms + section_terms + acronyms + bigrams + words))
@@ -115,7 +127,7 @@ def _extract_concepts(question: str) -> List[str]:
 def _rerank_chunks(question: str, candidate_chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Reranks candidate vector search chunks using lightweight concept alignment,
-    stem/synonym matching, definition indicator boosting, and specialized application filtering.
+    stem/synonym matching, definition indicator boosting, RRF/BM25 scores, and specialized application filtering.
     """
     if not candidate_chunks:
         return []
@@ -127,7 +139,7 @@ def _rerank_chunks(question: str, candidate_chunks: List[Dict[str, Any]]) -> Lis
     is_def_query = bool(re.search(r'\b(what is|what are|define|definition|meaning of|explain the concept|overview of)\b', q_clean, re.I))
 
     definition_pattern = re.compile(
-        r'\b(is defined as|defined as|refers to|consists of|components?|functions?|types?|is a|is an|are:|meaning|stands for|degree|arity|formula|includes?|occurs when|calculated by|determined by|results in|known as|is called|defined by)\b',
+        r'\b(is defined as|defined as|refers to|consists of|components?|functions?|types?|is a|is an|are:|meaning|stands for|degree|arity|formula|includes?|occurs when|calculated by|determined by|results in|known as|is called|defined by|tasks|ingredients|dimensions|requirements|services|principles|methods|properties|features|elements|rules|steps|stages|categories|classes|goals|objectives)\b',
         re.I
     )
 
@@ -143,6 +155,7 @@ def _rerank_chunks(question: str, candidate_chunks: List[Dict[str, Any]]) -> Lis
         content_words = set(re.findall(r'\b\w+\b', content_lower))
         content_stems = {_stem_word(cw) for cw in content_words}
         dist = chunk.get("score", 1.0)
+        rrf_val = chunk.get("rrf_score", 0.0)
         page_num = chunk.get("page_num", 1)
 
         # 1. Semantic score (cosine distance: 0 = identical, 2 = opposite)
@@ -176,22 +189,23 @@ def _rerank_chunks(question: str, candidate_chunks: List[Dict[str, Any]]) -> Lis
         def_bonus = 0.0
         if is_def_query:
             if has_def_indicator:
-                def_bonus += 0.35
+                def_bonus += 0.25
             if has_specialized and not has_def_indicator:
                 def_bonus -= 0.15
-            # Small bonus for earlier pages when answering general definition queries
             if page_num <= 3:
                 def_bonus += 0.05
         else:
             if has_def_indicator:
                 def_bonus += 0.15
 
-        if concept_matches == 0 and ac_matches == 0:
-            lex_score = max(0.0, def_bonus)
+        if concept_matches > 0 or ac_matches > 0:
+            concept_weight = concept_score
+            lex_score = min(1.0, concept_weight * 0.70 + ac_score * 0.20 + def_bonus)
+            combined_score = round(min(1.0, 0.40 * sem_score + 0.40 * lex_score + 0.20 * max(rrf_val, concept_weight)), 3)
         else:
-            lex_score = min(1.0, max(0.0, concept_score * 0.40 + ac_score * 0.30 + def_bonus))
-
-        combined_score = max(round(sem_score, 3), round(0.50 * sem_score + 0.50 * lex_score, 3))
+            lex_score = max(0.0, def_bonus)
+            penalty = 0.30 if concepts else 0.0
+            combined_score = round(max(0.0, 0.60 * sem_score + 0.40 * lex_score - penalty), 3)
 
         c_copy = dict(chunk)
         c_copy["combined_score"] = combined_score
@@ -615,6 +629,12 @@ def _is_standalone_math_query(question: str) -> bool:
     if has_calc_cmd and has_digits and (has_math_func or re.search(r'[\+\-\*\/\u00d7\u00f7x%]', q_lower)):
         return True
 
+    # 4. Math questions containing explicit digits and percentage/math terms
+    has_digits = bool(re.search(r'\d', q_lower))
+    has_percent_math = bool(re.search(r'\b(?:percentage|percent|%)\s*(?:increase|decrease|change|difference|of)\b', q_lower))
+    if has_digits and has_percent_math:
+        return True
+
     return False
 
 
@@ -688,6 +708,38 @@ def _is_explicit_document_query(question: str) -> bool:
     return False
 
 
+def _normalize_retrieval_query(question: str) -> str:
+    """
+    Strips instructional/meta phrases (e.g., 'from the PDF', 'according to the document',
+    'based on the textbook', 'in the uploaded file') from the retrieval query before dense
+    embedding and BM25 search.
+    This prevents retrieval distortion while preserving domain concepts.
+    """
+    q = question.strip()
+    
+    meta_patterns = [
+        r'\baccording\s+to\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|article|uploaded\s+file|file|passage|text|manual|guide)\b',
+        r'\b(?:from|in|based\s+on|per|as\s+stated\s+in|as\s+described\s+in|as\s+mentioned\s+in)\s+(?:the\s+)?(?:uploaded\s+)?(?:pdf|document|textbook|book|paper|report|article|file|passage|text|manual|guide)\b',
+        r'\bwhat\s+does\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|file)\s+(?:say\s+about|state\s+about|mention\s+about|describe)\b',
+        r'\bfind\s+(?:this|it|that|the\s+answer)\s+in\s+(?:the\s+)?(?:pdf|document|textbook|book|file)\b',
+        r'\buse\s+(?:the\s+)?(?:uploaded\s+)?(?:pdf|document|textbook|book|file)\s+to\s+answer\b',
+        r'\bexplain\s+(?:this|that|it)?\s*from\s+(?:the\s+)?(?:uploaded\s+)?(?:pdf|document|textbook|book|file)\b',
+        r'\b(?:the\s+)?uploaded\s+(?:pdf|document|file)\b',
+    ]
+    
+    normalized = q
+    for pat in meta_patterns:
+        normalized = re.sub(pat, '', normalized, flags=re.IGNORECASE)
+    
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    normalized = re.sub(r'^[,\s\?]+|[,\s\?]+$', '', normalized).strip()
+    
+    if not normalized or len(normalized) < 3:
+        return q
+        
+    return normalized
+
+
 # ============================================================================
 # 1. RETRIEVAL NODE — multi-query expansion + concept alignment reranking
 # ============================================================================
@@ -752,8 +804,9 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         target_docs = active_docs
 
     # Resolve conversational references (e.g. 'this concept', 'those two', 'explain that')
-    search_query, resolved_refs = _resolve_conversational_references(question, conversation_id)
-    logger.info(f"[RETRIEVE] ConvID: '{conversation_id}' | Query: '{question}' (Search: '{search_query}') | Target Docs: {target_docs}")
+    norm_question = _normalize_retrieval_query(question)
+    search_query, resolved_refs = _resolve_conversational_references(norm_question, conversation_id)
+    logger.info(f"[RETRIEVE] ConvID: '{conversation_id}' | Raw Query: '{question}' (Norm/Search: '{search_query}') | Target Docs: {target_docs}")
 
     queries = _expand_query(search_query)
     seen_ids = set()
@@ -891,7 +944,10 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
 
     doc_relevance = top_chunks[0]["combined_score"] if top_chunks else 0.0
     sufficiency = _evaluate_evidence_sufficiency(question, top_chunks)
-    logger.info(f"[RETRIEVE] {len(top_chunks)} chunks selected, doc_relevance={doc_relevance:.3f}, sufficiency={sufficiency['is_sufficient']}")
+    logger.info(
+        f"[RETRIEVE] {len(top_chunks)} chunks selected, doc_relevance={doc_relevance:.3f}, sufficiency={sufficiency['is_sufficient']}. "
+        f"Top Chunks Detail: {[{'doc_id': c.get('doc_id'), 'page': c.get('page_num'), 'score': c.get('combined_score'), 'snippet': c.get('content', '')[:60]} for c in top_chunks]}"
+    )
 
     # ── Post-retrieval GK re-route guard ────────────────────────────────────
     # CRITICAL: Only re-route to general_knowledge when there are NO active docs in the
@@ -1797,7 +1853,8 @@ def verify_answer_node(state: DocuMindState) -> Dict[str, Any]:
     fallback_phrases = [
         "couldn't find", "not present", "not found", "unable to find",
         "does not provide enough information", "does not provide information",
-        "does not mention", "not mentioned"
+        "does not contain enough information", "does not contain information",
+        "does not mention", "not mentioned", "no information", "not provided"
     ]
     is_fallback = not answer or any(p in answer.lower() for p in fallback_phrases)
 
