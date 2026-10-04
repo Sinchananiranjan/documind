@@ -1,5 +1,6 @@
 # DocuMind – Multimodal Document Analyzer
 
+
 DocuMind is an open-source, 100% local AI application designed to analyze multimodal PDF documents containing **text, scanned OCR pages, tables, and images**. 
 
 Optimized specifically for Windows systems with **8GB RAM, Intel i3 CPU, and zero GPU requirements**, DocuMind requires zero paid API keys and keeps all data locally on your computer.

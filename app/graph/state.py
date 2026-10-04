@@ -28,6 +28,13 @@ class DocuMindState(TypedDict):
         uploaded_image_ocr: OCR text extracted from the uploaded standalone image.
         uploaded_image_path: Original file path/name of the uploaded standalone image.
         web_search_results: List of web search result dicts with title/snippet/url/source.
+        source_intent: Centralized source-selection intent computed once by router_node.
+            'document_only' — user explicitly requests document-grounded answer only.
+            'document_first' — documents exist; search doc first, fallback allowed.
+            'web' — user explicitly requests web/current/external information.
+            'hybrid' — user requests both document and external information.
+            'general_knowledge' — no docs, or explicit GK request.
+        fallback_reason: If a fallback occurred, describes why. Empty string if no fallback.
     """
     conversation_id: Optional[str]
     active_docs: List[str]
@@ -54,5 +61,7 @@ class DocuMindState(TypedDict):
     web_search_results: List[Dict[str, Any]]
     # Evidence sufficiency analysis (evaluated after retrieval & reranking)
     evidence_sufficiency: Optional[Dict[str, Any]]
-
-
+    # Centralized source-selection policy (computed once by router_node, respected by all nodes)
+    source_intent: str
+    # Fallback tracking (set when a node falls back from the original route)
+    fallback_reason: str

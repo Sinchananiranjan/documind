@@ -1,4 +1,4 @@
-"""Vector store manager using persistent ChromaDB and LangChain documents."""
+"""Vector store manager using persistent ChromaDB and Haystack hybrid retrieval pipeline."""
 
 import os
 import logging
@@ -9,6 +9,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
 from app.rag.embeddings import get_embedding_model
+from app.rag.haystack_retriever import HaystackHybridRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +17,14 @@ CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma_db")
 COLLECTION_NAME = "documind_collection"
 
 _vector_store_instance = None
+_haystack_instance = None
 
 
 class VectorStoreManager:
-    """Manages document chunking, indexing, and persistent storage in ChromaDB (loaded once)."""
+    """Manages document chunking, ChromaDB persistence, and Haystack hybrid retrieval."""
 
     def __init__(self, persist_dir: str = CHROMA_PERSIST_DIR):
-        global _vector_store_instance
+        global _vector_store_instance, _haystack_instance
         self.persist_dir = persist_dir
         os.makedirs(self.persist_dir, exist_ok=True)
         self.embedding_function = get_embedding_model()
@@ -36,6 +38,10 @@ class VectorStoreManager:
             )
         self.vector_store = _vector_store_instance
 
+        if _haystack_instance is None:
+            _haystack_instance = HaystackHybridRetriever()
+        self.haystack_retriever = _haystack_instance
+
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=550,
             chunk_overlap=80,
@@ -46,8 +52,10 @@ class VectorStoreManager:
         """
         Splits text chunks while strictly preserving metadata:
         conversation_id, doc_id, filename, page_num, chunk_type, chunk_id.
+        Indexes both in ChromaDB (vector persistence) and Haystack (hybrid retrieval).
         """
         documents_to_add = []
+        raw_chunks_to_haystack = []
 
         for chunk in chunks:
             doc_id = chunk["doc_id"]
@@ -74,9 +82,21 @@ class VectorStoreManager:
                     }
                 )
                 documents_to_add.append(doc)
+                raw_chunks_to_haystack.append({
+                    "doc_id": doc_id,
+                    "conversation_id": conv_id,
+                    "filename": filename,
+                    "page_num": page_num,
+                    "chunk_type": chunk_type,
+                    "chunk_id": chunk_id,
+                    "content": content,
+                    "upload_order": upload_order,
+                    "image_b64": chunk.get("image_b64", "")
+                })
             else:
                 sub_chunks = self.text_splitter.split_text(content)
                 for idx, sub in enumerate(sub_chunks):
+                    sub_cid = f"{chunk_id}_s{idx+1}"
                     doc = Document(
                         page_content=sub,
                         metadata={
@@ -85,20 +105,29 @@ class VectorStoreManager:
                             "filename": filename,
                             "page_num": page_num,
                             "chunk_type": chunk_type,
-                            "chunk_id": f"{chunk_id}_s{idx+1}",
+                            "chunk_id": sub_cid,
                             "upload_order": upload_order,
                             "image_b64": ""
                         }
                     )
                     documents_to_add.append(doc)
+                    raw_chunks_to_haystack.append({
+                        "doc_id": doc_id,
+                        "conversation_id": conv_id,
+                        "filename": filename,
+                        "page_num": page_num,
+                        "chunk_type": chunk_type,
+                        "chunk_id": sub_cid,
+                        "content": sub,
+                        "upload_order": upload_order,
+                        "image_b64": ""
+                    })
 
         if documents_to_add:
             self.vector_store.add_documents(documents_to_add)
-            logger.info(f"Indexed {len(documents_to_add)} vector chunks into ChromaDB collection '{COLLECTION_NAME}' (persist_dir: '{self.persist_dir}').")
-            if logger.isEnabledFor(logging.DEBUG):
-                doc_ids_added = list(set(d.metadata.get("doc_id") for d in documents_to_add if d.metadata))
-                logger.debug(f"[DEBUG INDEX] Collection='{COLLECTION_NAME}' | DocIDs={doc_ids_added} | Total Documents={len(documents_to_add)}")
-        
+            self.haystack_retriever.index_chunks(raw_chunks_to_haystack, conversation_id=conversation_id)
+            logger.info(f"Indexed {len(documents_to_add)} chunks into ChromaDB and Haystack retriever.")
+
         return len(documents_to_add)
 
     def search_similarity(
@@ -106,13 +135,12 @@ class VectorStoreManager:
         query: str,
         conversation_id: Optional[str] = None,
         doc_id: Optional[str] = None,
-        k: int = 8,  # Default k: retrieve more candidates for better coverage
+        k: int = 8,
         filter_type: Optional[str] = None,
         active_docs: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Perform similarity search in ChromaDB strictly filtered by conversation_id and active_docs.
-        Returns top matching sources with metadata preserved.
         """
         where_clause = {}
         conditions = []
@@ -140,24 +168,17 @@ class VectorStoreManager:
         if where_clause:
             kwargs["filter"] = where_clause
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[DEBUG SEARCH] Collection='{COLLECTION_NAME}' | Query='{query}' | ActiveDocs={active_docs} | DocID={doc_id} | Filter={where_clause} | k={k}")
-
         try:
             results = self.vector_store.similarity_search_with_score(query, **kwargs)
         except Exception as e:
             logger.error(f"Similarity search failed with filter {where_clause}: {e}.")
             return []
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"[DEBUG SEARCH RESULTS] Raw retrieved count: {len(results)} for query: '{query}'")
-
         formatted_results = []
         seen_contents = set()
 
         for doc, score in results:
             content_snippet = doc.page_content.strip()
-            # Deduplicate very similar sub-chunks
             if content_snippet in seen_contents:
                 continue
             seen_contents.add(content_snippet)
@@ -175,23 +196,88 @@ class VectorStoreManager:
             }
             formatted_results.append(res_item)
 
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"  -> Chunk doc_id='{res_item['doc_id']}' page={res_item['page_num']} score={res_item['score']:.4f} snippet='{res_item['snippet'][:80]}'")
-
             if len(formatted_results) >= k:
                 break
 
         return formatted_results
 
+    def search_hybrid(
+        self,
+        query: str,
+        conversation_id: Optional[str] = None,
+        doc_id: Optional[str] = None,
+        k: int = 10,
+        active_docs: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes Haystack Hybrid Retrieval:
+        1. Syncs stored ChromaDB documents into Haystack if not already present.
+        2. Retrieves dense similarity matches from ChromaDB.
+        3. Retrieves BM25 lexical matches from Haystack's InMemoryBM25Retriever.
+        4. Fuses candidates using RRF (Reciprocal Rank Fusion).
+        5. Applies neighboring chunk and page window expansion so multi-part answers are complete.
+        """
+        target_docs = active_docs or ([doc_id] if doc_id else [])
+
+        # Ensure Haystack has the document chunks loaded from ChromaDB if needed
+        self._ensure_haystack_synced(target_docs=target_docs, conversation_id=conversation_id)
+
+        # 1. Dense retrieval from ChromaDB
+        dense_results = self.search_similarity(
+            query=query,
+            conversation_id=conversation_id,
+            doc_id=doc_id,
+            k=k * 2,
+            active_docs=target_docs
+        )
+
+        # 2. BM25 retrieval from Haystack
+        bm25_results = self.haystack_retriever.bm25_search(
+            query=query,
+            conversation_id=conversation_id,
+            active_docs=target_docs,
+            top_k=k * 2
+        )
+
+        # 3. Fuse Dense + BM25 using Reciprocal Rank Fusion (RRF)
+        fused_candidates = self.haystack_retriever.fuse_dense_and_bm25(dense_results, bm25_results)
+
+        # 4. Context expansion: neighboring chunks & adjacent page chunks
+        expanded_candidates = self.haystack_retriever.expand_neighboring_chunks_and_pages(
+            candidate_chunks=fused_candidates[:k],
+            conversation_id=conversation_id,
+            active_docs=target_docs,
+            max_total_chunks=k + 4
+        )
+
+        return expanded_candidates
+
+    def _ensure_haystack_synced(self, target_docs: List[str], conversation_id: Optional[str] = None):
+        """Syncs chunks stored in ChromaDB into Haystack DocumentStore if missing."""
+        if not target_docs:
+            return
+        
+        # Check if target_docs already exist in haystack internal map
+        loaded_doc_ids = set(c.get("doc_id") for c in self.haystack_retriever._chunks_by_id.values())
+        missing_docs = [d for d in target_docs if d not in loaded_doc_ids]
+
+        if missing_docs:
+            logger.info(f"[HAYSTACK SYNC] Loading missing docs {missing_docs} from ChromaDB into Haystack...")
+            chroma_chunks = self.get_all_chunks_for_docs(active_docs=missing_docs, conversation_id=conversation_id, max_chunks=300)
+            if chroma_chunks:
+                self.haystack_retriever.index_chunks(chroma_chunks, conversation_id=conversation_id)
+
     def delete_document(self, doc_id: str, conversation_id: Optional[str] = None) -> bool:
-        """Delete all chunks associated with doc_id (and optional conversation_id) from ChromaDB."""
+        """Delete all chunks associated with doc_id from ChromaDB and Haystack."""
         try:
             collection = self.vector_store._collection
             if conversation_id:
                 collection.delete(where={"$and": [{"doc_id": doc_id}, {"conversation_id": conversation_id}]})
             else:
                 collection.delete(where={"doc_id": doc_id})
-            logger.info(f"Deleted doc_id '{doc_id}' (conversation_id='{conversation_id}') from vector store.")
+            
+            self.haystack_retriever.delete_document(doc_id, conversation_id=conversation_id)
+            logger.info(f"Deleted doc_id '{doc_id}' from vector store and Haystack retriever.")
             return True
         except Exception as e:
             logger.error(f"Error deleting doc_id '{doc_id}': {e}")
@@ -212,14 +298,10 @@ class VectorStoreManager:
         self,
         active_docs: List[str],
         conversation_id: Optional[str] = None,
-        max_chunks: int = 120
+        max_chunks: int = 150
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve ALL stored chunks for the given active_docs by metadata filter only
-        (no embedding search). Used as a lexical/exhaustive fallback so semantic search
-        gaps don't silently miss content that is present but not top-k similar.
-
-        Returns up to max_chunks chunks with synthesized score=0.5 for compatibility.
+        Retrieve ALL stored chunks for the given active_docs by metadata filter.
         """
         try:
             collection = self.vector_store._collection
@@ -258,13 +340,11 @@ class VectorStoreManager:
                     "chunk_id": meta.get("chunk_id", ""),
                     "content": content,
                     "snippet": content[:160] + "..." if len(content) > 160 else content,
-                    "score": 0.5,  # Neutral placeholder for compatibility
+                    "score": 0.5,
                     "image_b64": meta.get("image_b64", "")
                 })
 
-            # Sort by page order for sequential coverage
             results.sort(key=lambda x: (x.get("doc_id", ""), x.get("page_num", 1)))
-            logger.info(f"[LEXICAL FETCH] Retrieved {len(results)} total chunks for docs={active_docs}")
             return results[:max_chunks]
 
         except Exception as e:

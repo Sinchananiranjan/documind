@@ -166,6 +166,8 @@ def run_documind_workflow(
         "uploaded_image_path": uploaded_image_path,
         "web_search_results": [],
         "evidence_sufficiency": None,
+        "source_intent": "",
+        "fallback_reason": "",
     }
 
 

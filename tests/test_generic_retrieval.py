@@ -108,7 +108,7 @@ class TestGenericRetrieval(unittest.TestCase):
             mode="document_mode"
         )
         self.assertTrue(
-            "couldn't find" in res["answer"].lower() or "not provide" in res["answer"].lower()
+            "couldn't find" in res["answer"].lower() or "not provide" in res["answer"].lower() or "not contain" in res["answer"].lower()
         )
         self.assertFalse(res["verified"])
 

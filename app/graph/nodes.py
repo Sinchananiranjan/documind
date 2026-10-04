@@ -544,12 +544,12 @@ def _evaluate_evidence_sufficiency(question: str, chunks: List[Dict[str, Any]]) 
 def _needs_gk_web_search(question: str) -> bool:
     """
     Evaluates question intent for General Knowledge Mode to determine if external/current
-    verification or live web search is required, rather than relying on a small hardcoded keyword list.
+    verification or live web search is required.
 
     Domain-independent intent analysis:
     1. Recency & Time-Sensitivity Intent: Current updates, latest versions/data, real-time info.
-    2. Dynamic Real-World Entity Lookup Intent: Current statistics, weather, market data, prices, live scores, population, current leaders/roles.
-    3. Explicit Search Request Intent: Queries asking to search, look up, check online, or find live information.
+    2. Dynamic Real-World Entity Lookup Intent: Current statistics, weather, market data.
+    3. Explicit Search Request Intent: Queries asking to search, look up, check online.
     4. Explicit Recent/Future Year References: (e.g., 2025, 2026, 2027).
     """
     if _is_conversational_query(question):
@@ -558,7 +558,8 @@ def _needs_gk_web_search(question: str) -> bool:
     q_lower = question.lower()
 
     # Intent 1: Explicit search/lookup request
-    if re.search(r'\b(search|look\s*up|check online|find online|google|web|url|link|site|page)\b', q_lower):
+    # NOTE: "page" is removed — it matched document-context queries like "what does page 20 say?"
+    if re.search(r'\b(search\s+(?:the\s+)?(?:web|internet|online)|look\s*up|check online|find online|google|web\s+search|url|link|site)\b', q_lower):
         return True
 
     # Intent 2: Recency / Time-sensitive / Current status intent
@@ -619,16 +620,72 @@ def _is_standalone_math_query(question: str) -> bool:
 
 def _is_explicit_document_query(question: str) -> bool:
     """
-    Generic check if question explicitly refers to document, PDF, report, file, section, page, figure, or table.
+    Generic check if question explicitly refers to a document, PDF, textbook, report, 
+    uploaded file, specific section, page, figure, or table.
+    
+    Matches natural language patterns like:
+    - "According to the PDF..."
+    - "From the uploaded document..."
+    - "Based on the textbook..."
+    - "What does page 20 say?"
+    - "What does the document say about..."
+    - "Find this in the document."
+    - "Use the uploaded PDF to answer."
+    - "According to the textbook..."
+    - "Explain this from the uploaded file."
+    
+    Avoids false positives:
+    - "from the internet" / "web page" / "find online" / "search the web"
     """
     q_lower = question.strip().lower()
-    doc_patterns = [
-        r"\bdoc(?:ument)?s?\b", r"\bpdf\b", r"\bfile\b", r"\bpage\b", r"\bsection\b",
-        r"\bchapter\b", r"\btable\b", r"\bfigure\b", r"\bfig\b", r"\breport\b",
-        r"\bpassage\b", r"\bexcerpt\b", r"\bauthor\b", r"\btext\b", r"\baccording to\b",
-        r"\bin this\b", r"\bfrom the\b", r"\bsummarize\b", r"\boverview\b"
+    
+    # Negative patterns — explicit web/external intent should NOT match as doc query
+    web_negatives = [
+        r"\bfrom the internet\b", r"\bfrom the web\b", r"\bweb page\b",
+        r"\bfind online\b", r"\bsearch online\b", r"\bcheck online\b",
+        r"\bgoogle\b", r"\bfrom wikipedia\b",
     ]
-    return any(re.search(pat, q_lower) for pat in doc_patterns)
+    if any(re.search(pat, q_lower) for pat in web_negatives):
+        return False
+    
+    # Group 1: Explicit document/source reference phrases
+    source_ref_patterns = [
+        r"\baccording to\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|article|uploaded|file|passage|text|manual|guide)\b",
+        r"\b(?:from|in|based on|per|as (?:stated|described|mentioned|shown|explained) in)\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|article|uploaded|file|passage|text|manual|guide)\b",
+        r"\bwhat does (?:the\s+)?(?:pdf|document|textbook|book|paper|report|file)\s+(?:say|mention|state|describe|explain|contain)\b",
+        r"\bfind\s+(?:this|it|that|the answer)\s+in\s+(?:the\s+)?(?:pdf|document|textbook|book|file)\b",
+        r"\buse\s+(?:the\s+)?(?:uploaded|pdf|document|textbook|book|file)\b",
+        r"\bexplain\s+(?:this|that|it)\s+from\s+(?:the\s+)?(?:uploaded|pdf|document|textbook|book|file)\b",
+        r"\buploaded\s+(?:pdf|document|file|textbook)\b",
+        r"\b(?:the\s+)?uploaded\s+(?:pdf|document|file)\b",
+    ]
+    if any(re.search(pat, q_lower) for pat in source_ref_patterns):
+        return True
+    
+    # Group 2: Direct document element references (page, section, chapter, figure, table)
+    element_patterns = [
+        r"\b(?:page|section|chapter|module|figure|fig|table)\s+\d+",  # "page 20", "section 3"
+        r"\bwhat\s+(?:does|is\s+(?:on|in))\s+page\s+\d+\b",  # "what does page 20 say"
+        r"\bin\s+(?:section|chapter|module|part)\s+\d+\b",  # "in section 3"
+    ]
+    if any(re.search(pat, q_lower) for pat in element_patterns):
+        return True
+    
+    # Group 3: Standalone document-type keywords with document-grounding context
+    # Only match these if the query shows clear document-grounding intent
+    doc_type_with_context = [
+        r"\b(?:the|this|my|our|your|uploaded|attached|given|provided|selected)\s+(?:pdf|document|textbook|book|paper|report|article|file|passage|manual)\b",
+        r"\bsummarize\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|article|file)\b",
+        r"\boverview\s+of\s+(?:the\s+)?(?:pdf|document|textbook|book|paper|report|article|file)\b",
+    ]
+    if any(re.search(pat, q_lower) for pat in doc_type_with_context):
+        return True
+    
+    # Group 4: Author/publication queries for uploaded documents
+    if re.search(r"\b(?:who\s+(?:wrote|authored|published|created)|author(?:s|ed)?)\s+(?:the|this|my|our|uploaded|attached|given|provided|selected)?\s*(?:pdf|document|textbook|book|paper|report|article|file|passage|manual|guide|work)\b", q_lower):
+        return True
+    
+    return False
 
 
 # ============================================================================
@@ -703,12 +760,11 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
     all_chunks = []
 
     try:
-        # If multiple target documents exist, perform balanced multi-document search across each doc
-        # Use k=10 per-query per-doc to maximise coverage before reranking
+        # Perform Haystack hybrid search (Dense + BM25 + RRF + Chunk/Page Window Expansion)
         if len(target_docs) > 1:
             for d_id in target_docs:
                 for q in queries:
-                    results = vector_manager.search_similarity(
+                    results = vector_manager.search_hybrid(
                         query=q,
                         conversation_id=conversation_id,
                         doc_id=d_id,
@@ -722,7 +778,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
                             all_chunks.append(c)
         else:
             for q in queries:
-                results = vector_manager.search_similarity(
+                results = vector_manager.search_hybrid(
                     query=q,
                     conversation_id=conversation_id,
                     doc_id=state.get("doc_id"),
@@ -735,7 +791,7 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
                         seen_ids.add(cid)
                         all_chunks.append(c)
     except Exception as e:
-        logger.error(f"[RETRIEVE] Vector store search or OCR retrieval failed: {e}")
+        logger.error(f"[RETRIEVE] Haystack hybrid search failed: {e}")
         all_chunks = []
 
     reranked = _rerank_chunks(search_query, all_chunks)
@@ -973,11 +1029,11 @@ def _is_clear_general_knowledge_query(question: str) -> bool:
         return False
 
     gk_concept_patterns = [
-        r"^what\s+(?:is|are)\s+(?:photosynthesis|gravity|dna|rna|the\s+speed\s+of\s+light|quantum\s+mechanics|ai|machine\s+learning|blockchain|evolution|relativity|gradient\s+descent|a\s+neural\s+network|a\s+list|a\s+tuple|a\s+set|lists|tuples|sets)\b",
-        r"^explain\s+(?:gradient\s+descent|photosynthesis|gravity|dna|quicksort|merge\s+sort|a\s+neural\s+network|recursion|backpropagation|overfitting|underfitting)\b",
-        r"^who\s+(?:composed|discovered|invented|built|created)\s+(?:hamlet|relativity|the\s+lightbulb|telephone|python|c\+\+|java)\b",
+        r"^what\s+(?:is|are)\s+(?:photosynthesis|gravity|dna|rna|the\s+speed\s+of\s+light|quantum\s+mechanics|evolution|relativity|a\s+list|a\s+tuple|a\s+set|lists|tuples|sets)\b",
+        r"^explain\s+(?:photosynthesis|gravity|dna|quicksort|merge\s+sort|recursion)\b",
+        r"^who\s+(?:composed|discovered|invented|built|created|wrote|authored)\s+(?:hamlet|relativity|the\s+lightbulb|telephone|python|c\+\+|java)\b",
         r"^what\s+is\s+the\s+capital\s+of\s+",
-        r"^how\s+does\s+(?:gravity|photosynthesis|the\s+heart|the\s+sun|an\s+engine|wifi|gradient\s+descent|backpropagation)\s+work\b"
+        r"^how\s+does\s+(?:gravity|photosynthesis|the\s+heart|the\s+sun|an\s+engine|wifi)\s+work\b"
     ]
     if any(re.search(pat, q_lower) for pat in gk_concept_patterns):
         return True
@@ -985,14 +1041,44 @@ def _is_clear_general_knowledge_query(question: str) -> bool:
     return False
 
 
+def _is_hybrid_query(question: str) -> bool:
+    """
+    Generic detection for queries that require BOTH uploaded document evidence AND external/comparison information.
+    Domain-independent: matches document-grounded phrases + comparison/external intent. Zero question/topic hardcoding.
+    """
+    q_lower = question.strip().lower()
+    is_doc = _is_explicit_document_query(question)
+
+    comparison_patterns = [
+        r"\bcompare\s+(?:it|this|that)?\s*(?:with|to|against|and)\b",
+        r"\bversus\b",
+        r"\bvs\.?\b",
+        r"\bin\s+comparison\s+(?:to|with)\b",
+        r"\bin\s+contrast\s+(?:to|with)\b",
+        r"\bdifference\s+between\s+.+?\s+and\b",
+        r"\bhow\s+does\s+(?:it|this|that)\s+(?:compare|differ)\b",
+        r"\bas\s+well\s+as\s+external\b",
+        r"\boutside\s+(?:the\s+)?(?:pdf|document)\b",
+    ]
+    has_comp = any(re.search(pat, q_lower) for pat in comparison_patterns)
+    needs_web = _needs_gk_web_search(question)
+
+    return (is_doc and (has_comp or needs_web)) or (has_comp and (is_doc or needs_web))
+
+
 # ============================================================================
-# 2. ROUTER NODE — evidence-sufficiency-aware routing
+# 2. ROUTER NODE — centralized source-intent-aware routing
 # ============================================================================
 def router_node(state: DocuMindState) -> Dict[str, Any]:
     """
     LangGraph Node: Fast deterministic routing by question intent & evidence sufficiency.
-    Routes dynamically to: text_rag, table_analysis, image_analysis, calculation, hybrid,
-    web_search, or general_knowledge.
+    
+    Computes `source_intent` ONCE:
+      - 'document_only': user explicitly requests doc-grounded answer
+      - 'document_first': docs exist, search doc first, fallback allowed
+      - 'web': explicit web/current/external request (no docs or explicit web intent)
+      - 'hybrid': user requests both document and external information
+      - 'general_knowledge': no docs and no web intent
     """
     t0 = time.perf_counter()
     question = state["question"]
@@ -1003,69 +1089,93 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     doc_relevance = state.get("doc_relevance", 0.0)
     has_docs = bool(state.get("doc_id") or state.get("active_docs") or state.get("context_chunks"))
 
-    # 0. Explicit General Knowledge Mode override
-    if mode == "general_knowledge_mode":
-        route = "web_search" if _needs_gk_web_search(question) else "general_knowledge"
+    # 1. Calculation Intent (Check FIRST for both standalone & document math)
+    if _has_calculation_intent(question, chunks) or _is_standalone_math_query(question):
         routing_time = round(time.perf_counter() - t0, 4)
         timings = state.get("timings", {})
         timings["routing"] = routing_time
-        return {"route": route, "timings": timings}
+        logger.info(f"[ROUTER] Q='{question[:40]}...' -> Route='calculation'")
+        return {"route": "calculation", "source_intent": "document_first" if has_docs else "general_knowledge", "timings": timings}
 
-    sufficiency = state.get("evidence_sufficiency") or _evaluate_evidence_sufficiency(question, chunks)
-    is_sufficient = sufficiency.get("is_sufficient", False)
-
+    # ── Compute source_intent ONCE ──────────────────────────────────────────
+    is_explicit_doc = _is_explicit_document_query(question)
+    needs_web = _needs_gk_web_search(question)
+    is_hybrid = _is_hybrid_query(question)
+    
     explicit_gk_patterns = [
         r"\bgeneral knowledge\b", r"\boutside the document\b", r"\bwithout reading the pdf\b",
         r"\bgenerally speaking\b", r"\bfrom your knowledge\b"
     ]
     is_explicit_gk = any(re.search(pat, q_lower) for pat in explicit_gk_patterns)
+    
+    sufficiency = state.get("evidence_sufficiency") or {}
+    retrieval_has_run = state.get("evidence_sufficiency") is not None or "retrieval" in state.get("timings", {}) or len(state.get("context_chunks", [])) > 0
 
-    # 1. Calculation Intent (standalone math OR document-based math calculation)
-    if _has_calculation_intent(question, chunks):
-        route = "calculation"
+    existing_intent = state.get("source_intent", "")
+    if existing_intent:
+        source_intent = existing_intent
+    elif mode == "general_knowledge_mode":
+        source_intent = "general_knowledge"
+    elif mode == "document_mode":
+        source_intent = "document_only"
+    elif is_hybrid:
+        source_intent = "hybrid"
+    elif is_explicit_doc:
+        source_intent = "document_only"
+    elif is_explicit_gk or (_is_clear_general_knowledge_query(question) and not is_explicit_doc):
+        source_intent = "general_knowledge"
+    elif has_docs:
+        if retrieval_has_run:
+            sufficiency = state.get("evidence_sufficiency") or _evaluate_evidence_sufficiency(question, chunks)
+            is_insufficient = not sufficiency.get("is_sufficient")
+            if (len(chunks) == 0 or (doc_relevance < 0.15 and is_insufficient)) and not is_explicit_doc and mode == "auto":
+                source_intent = "general_knowledge"
+            else:
+                source_intent = "document_first"
+        else:
+            source_intent = "document_first"
+    elif needs_web:
+        source_intent = "web"
+    else:
+        source_intent = "general_knowledge"
 
-    # 2. Image / Figure Intent
-    elif has_uploaded_image:
-        route = "image_analysis"
-    elif any(re.search(r'\b' + img_term + r'\b', q_lower) for img_term in ["image", "picture", "photo", "diagram", "flowchart", "chart", "figure", "fig", "illustration", "drawing"]):
+    # ── Early exit for general_knowledge intent ─────────────────────────────
+    if source_intent == "general_knowledge" and not (has_docs and is_explicit_doc):
+        route = "web_search" if needs_web else "general_knowledge"
+        routing_time = round(time.perf_counter() - t0, 4)
+        timings = state.get("timings", {})
+        timings["routing"] = routing_time
+        logger.info(f"[ROUTER] Q='{question[:40]}...' intent={source_intent} -> Route='{route}'")
+        return {"route": route, "source_intent": source_intent, "timings": timings}
+
+    # ── Route Decision ──────────────────────────────────────────────────────
+    route = "text_rag"  # Default when docs exist
+
+    # Image / Figure Intent
+    if has_uploaded_image or any(re.search(r'\b' + img_term + r'\b', q_lower) for img_term in ["image", "picture", "photo", "diagram", "flowchart", "chart", "figure", "fig", "illustration", "drawing"]):
         route = "image_analysis"
     elif len(chunks) > 0 and chunks[0].get("chunk_type") == "image" and "show" in q_lower:
         route = "image_analysis"
 
-    # 3. Table Intent (tables, columns, rows, grids, matrices)
+    # Table Intent
     elif any(re.search(r'\b' + tbl_term + r'\b', q_lower) for tbl_term in ["table", "tables", "column", "columns", "row", "rows", "grid", "grids", "spreadsheet", "tabular", "matrix"]):
         route = "table_analysis"
     elif len(chunks) > 0 and chunks[0].get("chunk_type") == "table" and ("value" in q_lower or "list" in q_lower or "data" in q_lower or "row" in q_lower or "column" in q_lower):
         route = "table_analysis"
 
-    # 4. Explicit Document Mode or Sufficient Document Evidence or Explicit Document Request
-    elif mode == "document_mode":
+    # Source-intent-driven routing
+    elif source_intent == "document_only":
         route = "text_rag"
-    elif has_docs and _is_explicit_document_query(question):
-        route = "text_rag"
-    elif is_sufficient or (len(chunks) > 0 and sufficiency.get("is_partial", False)):
-        route = "text_rag"
-
-    # 5. Explicit General Knowledge Request or Recency/Web Search Intent
-    elif is_explicit_gk:
-        route = "web_search" if _needs_gk_web_search(question) else "general_knowledge"
-    elif _needs_gk_web_search(question) and (not has_docs or len(chunks) > 0):
+    elif source_intent == "hybrid":
+        route = "hybrid"
+    elif source_intent == "web":
         route = "web_search"
-
-    # 6. Clear World Knowledge Query — ONLY when no documents are attached
-    # When docs are present, we MUST always try to answer from the document first.
-    elif _is_clear_general_knowledge_query(question) and not has_docs:
-        route = "general_knowledge"
-
-    # 7. If no documents are attached to the conversation
+    elif source_intent == "document_first":
+        route = "text_rag"
+    elif source_intent == "general_knowledge":
+        route = "web_search" if needs_web else "general_knowledge"
     elif not has_docs:
         route = "general_knowledge"
-
-    # 7. If retrieve_node ran and doc_relevance is low — only route to GK when NO docs attached
-    elif len(chunks) > 0 and not is_sufficient and doc_relevance < 0.15 and not _is_explicit_document_query(question) and not has_docs:
-        route = "general_knowledge"
-
-    # 9. Document-First Default (when documents exist in active conversation, search documents first!)
     else:
         route = "text_rag"
 
@@ -1073,8 +1183,8 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     timings = state.get("timings", {})
     timings["routing"] = routing_time
 
-    logger.info(f"[ROUTER] Question='{question[:40]}...' has_docs={has_docs} Relevance={doc_relevance:.3f} -> Route='{route}'")
-    return {"route": route, "timings": timings}
+    logger.info(f"[ROUTER] Q='{question[:40]}...' has_docs={has_docs} intent={source_intent} -> Route='{route}'")
+    return {"route": route, "source_intent": source_intent, "timings": timings}
 
 
 def _is_document_list_query(question: str) -> bool:
@@ -1135,29 +1245,35 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
             msg = "No document has been uploaded to this conversation yet. Please upload a PDF to ask document-specific questions."
             return {"answer": msg, "verified": False, "route": "general_knowledge", "timings": timings}
 
-        # In auto mode, if retrieval yields no relevant chunks (topic absent from doc),
-        # fall through to General Knowledge as a final resort — but with a clear GK label.
-        # The document WAS searched (retrieve_node ran) — we just got no usable evidence.
-        # IMPORTANT: update route → 'general_knowledge' so the UI label is honest.
-        # In document_mode, stay strict: report "not in document" without calling GK.
-        if mode == "auto" and not _is_explicit_document_query(state.get("question", "")):
+        source_intent = state.get("source_intent", "")
+        is_doc_only = source_intent == "document_only" or _is_explicit_document_query(state.get("question", "")) or mode == "document_mode"
+
+        # If document_only intent, stay strict: return "not in document" without calling GK or web search
+        if is_doc_only:
+            logger.info("[TEXT_RAG] Document-only intent: blocking web/GK fallback because evidence is absent.")
+            return {
+                "answer": "The uploaded document does not provide information to answer this.",
+                "verified": False,
+                "timings": timings
+            }
+
+        # In auto mode for document_first intent, fall through to General Knowledge / Web Search as last resort if permitted
+        if mode == "auto":
             if _needs_gk_web_search(state.get("question", "")):
                 logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to Web Search.")
-                # We must manually chain the nodes since we're bypassing LangGraph's edges
                 ws_state = web_search_node(state)
                 state.update(ws_state)
                 we_result = web_enhanced_answer_node(state)
                 we_result["route"] = "web_search"
                 return we_result
             else:
-                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge (with label).")
+                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge.")
                 gk_result = general_knowledge_node(state)
-                gk_result["route"] = "general_knowledge"  # Ensure honest route label
+                gk_result["route"] = "general_knowledge"
                 return gk_result
 
-        # document_mode: strict — no GK fallback
         return {
-            "answer": "The uploaded document does not contain enough information to answer this.",
+            "answer": "The uploaded document does not provide information to answer this.",
             "verified": False,
             "timings": timings
         }
@@ -1221,7 +1337,7 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
     timings["tokens_per_sec"] = metrics.get("tokens_per_sec", 0.0)
 
     # Leave verified unset here — verify_answer_node will evaluate it
-    return {"answer": answer, "verified": False, "timings": timings}
+    return {"answer": answer, "verified": False, "sources": state.get("sources", []), "timings": timings}
 
 
 # ============================================================================
@@ -1480,7 +1596,7 @@ def hybrid_node(state: DocuMindState) -> Dict[str, Any]:
     timings["tokens_generated"] = metrics.get("tokens_generated", 0)
     timings["tokens_per_sec"] = metrics.get("tokens_per_sec", 0.0)
 
-    return {"answer": answer, "verified": True, "timings": timings}
+    return {"answer": answer, "timings": timings}
 
 
 # ============================================================================
@@ -1823,12 +1939,12 @@ def fallback_node(state: DocuMindState) -> Dict[str, Any]:
     """Returns structured fallback when document information is missing."""
     logger.warning("[FALLBACK] Information missing from document.")
     ans = state.get("answer", "")
-    if ans and "no document has been uploaded" in ans.lower():
+    if ans and ans.strip():
         return {
             "answer": ans,
             "verified": False
         }
     return {
-        "answer": "The uploaded document does not contain enough information to answer this.",
+        "answer": "The uploaded document does not provide information to answer this.",
         "verified": False
     }

@@ -28,6 +28,8 @@ dependencies = [
     "pydantic>=2.6.0",
     "torchvision>=0.29.0",
     "langchain-huggingface>=1.2.2",
+    "haystack-ai>=2.0.0",
+    "sentence-transformers-haystack>=0.2.0",
 ]
 
 [build-system]
