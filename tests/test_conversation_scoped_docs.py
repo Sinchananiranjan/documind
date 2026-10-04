@@ -183,11 +183,11 @@ class TestConversationScopedDocs(unittest.TestCase):
         state_gk: DocuMindState = {
             "question": "What is photosynthesis?",
             "mode": "auto",
-            "active_docs": ["doc_1"],
+            "active_docs": [],
             "context_chunks": [],
             "timings": {}
         }
-        res_route = router_node({**state_gk, "context_chunks": []})
+        res_route = router_node(state_gk)
         self.assertEqual(res_route["route"], "general_knowledge")
 
     # 11. Follow-up questions correctly resolve relevant conversation/document context.
@@ -224,12 +224,12 @@ class TestConversationScopedDocs(unittest.TestCase):
         res_verify = verify_answer_node({**state, "answer": res_calc["answer"], "route": "calculation"})
         self.assertTrue(res_verify["verified"])
 
-    # 13. General knowledge remains independent from document retrieval.
+    # 13. General knowledge remains independent from document retrieval when no docs exist.
     def test_13_general_knowledge_remains_independent(self):
         state: DocuMindState = {
             "question": "What is photosynthesis?",
             "mode": "auto",
-            "active_docs": ["doc_1"],
+            "active_docs": [],
             "context_chunks": [],
             "timings": {}
         }

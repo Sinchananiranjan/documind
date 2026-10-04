@@ -1122,7 +1122,7 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
         source_intent = "hybrid"
     elif is_explicit_doc:
         source_intent = "document_only"
-    elif is_explicit_gk or (_is_clear_general_knowledge_query(question) and not is_explicit_doc):
+    elif is_explicit_gk:
         source_intent = "general_knowledge"
     elif has_docs:
         if retrieval_has_run:
@@ -1134,6 +1134,8 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
                 source_intent = "document_first"
         else:
             source_intent = "document_first"
+    elif _is_clear_general_knowledge_query(question):
+        source_intent = "general_knowledge"
     elif needs_web:
         source_intent = "web"
     else:
