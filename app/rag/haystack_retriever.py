@@ -201,6 +201,7 @@ class HaystackHybridRetriever:
                     c_copy = dict(sp_chunk)
                     c_copy["combined_score"] = max(0.15, c.get("combined_score", 0.3) * 0.85)
                     c_copy["score"] = max(0.15, c.get("score", 0.3) * 0.85)
+                    c_copy["is_expanded"] = True
                     expanded_map[sp_id] = c_copy
                     ordered_keys.append(sp_id)
 
@@ -213,6 +214,7 @@ class HaystackHybridRetriever:
                     c_copy = dict(np_chunk)
                     c_copy["combined_score"] = max(0.10, c.get("combined_score", 0.3) * 0.75)
                     c_copy["score"] = max(0.10, c.get("score", 0.3) * 0.75)
+                    c_copy["is_expanded"] = True
                     expanded_map[np_id] = c_copy
                     ordered_keys.append(np_id)
 

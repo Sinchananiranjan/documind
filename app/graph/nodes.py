@@ -584,8 +584,8 @@ def _needs_gk_web_search(question: str) -> bool:
     if re.search(r'\b(stock price|market cap|weather|population|live score|exchange rate|current version|release date|who is currently|who is the current)\b', q_lower):
         return True
 
-    # Intent 4: Explicit recent/future year references
-    if re.search(r'\b(2025|2026|2027)\b', q_lower):
+    # Intent 4: Explicit recent/future year references (e.g. 2024 through 2049)
+    if re.search(r'\b(202[4-9]|203[0-9]|204[0-9])\b', q_lower):
         return True
 
     return False
@@ -993,19 +993,23 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
     timings["retrieval"] = retrieval_time
 
     diagnostics = {
-        "query": question,
+        "original_query": question,
         "normalized_query": search_query,
+        "document_id": target_docs,
         "conversation_id": conversation_id,
-        "target_docs": target_docs,
-        "retrieved_chunk_ids": [c.get("chunk_id", "") for c in top_chunks],
-        "page_numbers": [c.get("page_num", 1) for c in top_chunks],
+        "candidate_chunks": [c.get("chunk_id", "") for c in all_chunks],
+        "dense_results": [c.get("chunk_id", "") for c in all_chunks if c.get("score") is not None],
         "dense_scores": [round(max(0.0, 1.0 - (c.get("score", 1.0) / 2.0)), 3) for c in top_chunks],
-        "BM25_scores": [round(c.get("bm25_score", 0.0), 3) for c in top_chunks],
+        "bm25_results": [c.get("chunk_id", "") for c in all_chunks if c.get("bm25_score", 0.0) > 0],
+        "bm25_scores": [round(c.get("bm25_score", 0.0), 3) for c in top_chunks],
+        "fusion_results": [c.get("chunk_id", "") for c in all_chunks if c.get("rrf_score", 0.0) > 0],
         "fusion_scores": [round(c.get("rrf_score", 0.0), 3) for c in top_chunks],
+        "reranked_results": [c.get("chunk_id", "") for c in reranked],
         "reranker_scores": [round(c.get("combined_score", 0.0), 3) for c in top_chunks],
-        "final_evidence_snippets": [c.get("content", "")[:120] for c in top_chunks],
+        "neighbor_expansion": [c.get("chunk_id", "") for c in top_chunks if c.get("is_expanded")],
+        "final_evidence": [c.get("content", "")[:120] for c in top_chunks],
         "evidence_sufficiency": sufficiency,
-        "final_route": route
+        "fallback_decision": route
     }
     logger.info(
         f"[RETRIEVAL DIAGNOSTICS] Q='{question[:40]}...' | Route={route} | Score={doc_relevance:.3f} | "
