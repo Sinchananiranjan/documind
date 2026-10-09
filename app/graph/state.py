@@ -65,3 +65,5 @@ class DocuMindState(TypedDict):
     source_intent: str
     # Fallback tracking (set when a node falls back from the original route)
     fallback_reason: str
+    # Detailed retrieval diagnostics for auditability & explainability
+    retrieval_diagnostics: Optional[Dict[str, Any]]

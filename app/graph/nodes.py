@@ -1036,11 +1036,29 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
     timings = state.get("timings", {})
     timings["retrieval"] = retrieval_time
 
+    diagnostics = {
+        "query": question,
+        "normalized_query": search_query,
+        "conversation_id": conversation_id,
+        "target_docs": target_docs,
+        "retrieved_chunk_ids": [c.get("chunk_id", "") for c in top_chunks],
+        "page_numbers": [c.get("page_num", 1) for c in top_chunks],
+        "dense_scores": [round(max(0.0, 1.0 - (c.get("score", 1.0) / 2.0)), 3) for c in top_chunks],
+        "BM25_scores": [round(c.get("bm25_score", 0.0), 3) for c in top_chunks],
+        "fusion_scores": [round(c.get("rrf_score", 0.0), 3) for c in top_chunks],
+        "reranker_scores": [round(c.get("combined_score", 0.0), 3) for c in top_chunks],
+        "final_evidence_snippets": [c.get("content", "")[:120] for c in top_chunks],
+        "evidence_sufficiency": sufficiency,
+        "final_route": state.get("route", "text_rag")
+    }
+    logger.debug(f"[RETRIEVAL DIAGNOSTICS] {diagnostics}")
+
     return {
         "context_chunks": top_chunks,
         "sources": sources,
         "doc_relevance": doc_relevance,
         "evidence_sufficiency": sufficiency,
+        "retrieval_diagnostics": diagnostics,
         "timings": timings
     }
 

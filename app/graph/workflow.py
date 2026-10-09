@@ -168,6 +168,7 @@ def run_documind_workflow(
         "evidence_sufficiency": None,
         "source_intent": "",
         "fallback_reason": "",
+        "retrieval_diagnostics": None,
     }
 
 
@@ -182,11 +183,13 @@ def run_documind_workflow(
         "doc_id": final_state["doc_id"],
         "mode": final_state.get("mode", "document_mode"),
         "route": final_state.get("route", "text_rag"),
+        "source_intent": final_state.get("source_intent", ""),
         "answer": final_state.get("answer", "I couldn't find this in the selected document."),
         "sources": final_state.get("sources", []),
         "verified": final_state.get("verified", False),
         "doc_relevance": final_state.get("doc_relevance", 0.0),
         "evidence_sufficiency": final_state.get("evidence_sufficiency"),
+        "retrieval_diagnostics": final_state.get("retrieval_diagnostics"),
         "retry_count": final_state.get("retry_count", 0),
         "timings": timings,
         "web_search_results": final_state.get("web_search_results", []),
