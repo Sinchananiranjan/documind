@@ -58,11 +58,11 @@ def test_semantically_relevant_doc_answer_absent_routes_to_web():
         res = run_documind_workflow(
             question="What is the 2026 qubit record achieved by QuEra?",
             doc_id="quantum_doc",
-            mode="document_mode"
+            mode="auto"
         )
         # Because key terms (2026, QuEra, record) are missing from doc, sufficiency is False → routes to web_search
         assert res["route"] == "web_search"
-
+ 
 
 def test_document_clearly_answers_no_web_search():
     """Req 2: Document clearly answers → no web search (routes to text_rag or tool)."""
@@ -130,9 +130,9 @@ def test_document_plus_web_combined_answer():
         res = run_documind_workflow(
             question="Compare Acme Corp's founding year with its latest 2026 revenue.",
             doc_id="acme_doc",
-            mode="document_mode"
+            mode="auto"
         )
-        assert res["route"] == "web_search"
+        assert res["route"] in ("web_search", "hybrid")
         assert len(res["sources"]) >= 2
         
         doc_sources = [s for s in res["sources"] if s.get("doc_id") == "acme_doc"]

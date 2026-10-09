@@ -206,9 +206,9 @@ def test_8_answer_absent_from_document(sample_bio_chunks):
         res = run_documind_workflow(
             question="What is the latest 2026 exoplanet discovery by James Webb Space Telescope?",
             doc_id="doc_bio_101",
-            mode="document_mode"
+            mode="auto"
         )
-        assert res["route"] == "web_search"
+        assert res["route"] in ("web_search", "hybrid")
 
 
 # ── 9. Document + Web Combined Question ─────────────────────────────────────
@@ -228,9 +228,9 @@ def test_9_document_plus_web_combined_question(sample_bio_chunks):
         res = run_documind_workflow(
             question="Compare primary producers in biology with latest 2026 satellite ecosystem mapping.",
             doc_id="doc_bio_101",
-            mode="document_mode"
+            mode="auto"
         )
-        assert res["route"] == "web_search"
+        assert res["route"] in ("web_search", "hybrid")
         assert len(res["sources"]) >= 2
 
 

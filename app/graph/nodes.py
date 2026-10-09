@@ -534,7 +534,7 @@ def _evaluate_evidence_sufficiency(question: str, chunks: List[Dict[str, Any]]) 
     # 1. If question intent seeks current/external web info (e.g. '2026', 'latest') and key terms are missing from doc:
     needs_web = _needs_gk_web_search(question)
     
-    if needs_web and key_term_coverage < 0.60:
+    if needs_web and key_term_coverage < 0.60 and not _is_explicit_document_query(question):
         is_sufficient = False
         is_partial = top_score >= RELEVANCE_PARTIAL
     else:
@@ -949,42 +949,6 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         f"Top Chunks Detail: {[{'doc_id': c.get('doc_id'), 'page': c.get('page_num'), 'score': c.get('combined_score'), 'snippet': c.get('content', '')[:60]} for c in top_chunks]}"
     )
 
-    # ── Post-retrieval GK re-route guard ────────────────────────────────────
-    # CRITICAL: Only re-route to general_knowledge when there are NO active docs in the
-    # conversation. If the user has uploaded documents, we MUST attempt to answer from
-    # those documents, even if semantic similarity is low. Low similarity may simply mean
-    # the embedding model chose a different surface form, not that the doc lacks the info.
-    has_active_docs_in_state = bool(state.get("doc_id") or state.get("active_docs"))
-
-    initial_route = state.get("route", "text_rag")
-
-    # Post-retrieval route adjustment: re-route to general_knowledge when evidence is genuinely
-    # minimal AND the user did not explicitly demand document grounding.
-    # The document WAS searched (retrieve_node executed), but no usable evidence was found.
-    is_insufficient_evidence = not sufficiency.get("is_sufficient") and not sufficiency.get("is_partial")
-    if (
-        initial_route == "text_rag"
-        and doc_relevance < 0.15
-        and is_insufficient_evidence
-        and not _is_explicit_document_query(question)
-        and state.get("mode", "auto") == "auto"
-    ):
-        logger.info(
-            f"[RETRIEVE] No docs in conversation and evidence score={doc_relevance:.3f} is minimal. "
-            "Adjusting route → general_knowledge."
-        )
-        retrieval_time = round(time.perf_counter() - t0, 3)
-        timings = state.get("timings", {})
-        timings["retrieval"] = retrieval_time
-        return {
-            "route": "general_knowledge",
-            "context_chunks": [],
-            "sources": [],
-            "doc_relevance": 0.0,
-            "evidence_sufficiency": sufficiency,
-            "timings": timings
-        }
-
     sources = []
     for c in top_chunks:
         sources.append({
@@ -996,41 +960,33 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
             "snippet": c.get("snippet", c["content"][:150])
         })
 
-    # Check if question seeks calculation based on retrieved document chunks
-    if _has_calculation_intent(question, top_chunks):
-        logger.info(f"[RETRIEVE] Query seeks calculation with document evidence. Routing to calculation.")
-        retrieval_time = round(time.perf_counter() - t0, 3)
-        timings = state.get("timings", {})
-        timings["retrieval"] = retrieval_time
-        return {
-            "route": "calculation",
-            "context_chunks": top_chunks,
-            "sources": sources,
-            "doc_relevance": doc_relevance,
-            "evidence_sufficiency": sufficiency,
-            "timings": timings
-        }
+    initial_route = state.get("route", "text_rag")
+    is_sufficient_evidence = sufficiency.get("is_sufficient", False) or (sufficiency.get("is_partial", False) and not _needs_gk_web_search(question))
+    mode = state.get("mode", "auto")
 
-    # Check if query needs web search (for recency / 2026 data or external web intent)
-    if _needs_gk_web_search(question):
-        if _is_explicit_document_query(question) and len(top_chunks) > 0:
-            logger.info("[RETRIEVE] Query is explicitly doc-grounded but needs web search/GK. Routing to hybrid.")
+    # Post-retrieval routing: Vector DB is ALWAYS checked first when documents exist.
+    # 1. Calculation intent with document math context
+    if _has_calculation_intent(question, top_chunks):
+        route = "calculation"
+    # 2. Image / Table intent
+    elif initial_route in ("image_analysis", "table_analysis") and len(top_chunks) > 0:
+        route = initial_route
+    # 3. Document evidence exists in Vector DB
+    elif is_sufficient_evidence:
+        if _is_hybrid_query(question):
             route = "hybrid"
         else:
-            logger.info(f"[RETRIEVE] Query requires web search. Routing to web_search with {len(top_chunks)} document chunks.")
+            route = "text_rag"
+    # 4. Insufficient document evidence -> evaluate fallback options ONLY after vector search attempt
+    else:
+        if _needs_gk_web_search(question) or _is_hybrid_query(question):
+            logger.info(f"[RETRIEVE] Document evidence insufficient for '{question[:40]}...'. Routing to web_search fallback.")
             route = "web_search"
-            
-        retrieval_time = round(time.perf_counter() - t0, 3)
-        timings = state.get("timings", {})
-        timings["retrieval"] = retrieval_time
-        return {
-            "route": route,
-            "context_chunks": top_chunks,
-            "sources": sources,
-            "doc_relevance": doc_relevance,
-            "evidence_sufficiency": sufficiency,
-            "timings": timings
-        }
+        elif not _is_explicit_document_query(question):
+            logger.info(f"[RETRIEVE] Document evidence insufficient for '{question[:40]}...'. Routing to general_knowledge fallback.")
+            route = "general_knowledge"
+        else:
+            route = "text_rag"
 
     retrieval_time = round(time.perf_counter() - t0, 3)
     timings = state.get("timings", {})
@@ -1049,11 +1005,15 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         "reranker_scores": [round(c.get("combined_score", 0.0), 3) for c in top_chunks],
         "final_evidence_snippets": [c.get("content", "")[:120] for c in top_chunks],
         "evidence_sufficiency": sufficiency,
-        "final_route": state.get("route", "text_rag")
+        "final_route": route
     }
-    logger.debug(f"[RETRIEVAL DIAGNOSTICS] {diagnostics}")
+    logger.info(
+        f"[RETRIEVAL DIAGNOSTICS] Q='{question[:40]}...' | Route={route} | Score={doc_relevance:.3f} | "
+        f"Chunks={len(top_chunks)} | Sufficiency={sufficiency['is_sufficient']}"
+    )
 
     return {
+        "route": route,
         "context_chunks": top_chunks,
         "sources": sources,
         "doc_relevance": doc_relevance,
@@ -1124,13 +1084,13 @@ def _is_hybrid_query(question: str) -> bool:
     is_doc = _is_explicit_document_query(question)
 
     comparison_patterns = [
-        r"\bcompare\s+(?:it|this|that)?\s*(?:with|to|against|and)\b",
+        r"\bcompare\b.*?\b(?:with|to|against|and)\b",
         r"\bversus\b",
         r"\bvs\.?\b",
         r"\bin\s+comparison\s+(?:to|with)\b",
         r"\bin\s+contrast\s+(?:to|with)\b",
-        r"\bdifference\s+between\s+.+?\s+and\b",
-        r"\bhow\s+does\s+(?:it|this|that)\s+(?:compare|differ)\b",
+        r"\bdifference\s+between\b",
+        r"\bhow\s+does\b.*?\b(?:compare|differ)\b",
         r"\bas\s+well\s+as\s+external\b",
         r"\boutside\s+(?:the\s+)?(?:pdf|document)\b",
     ]
