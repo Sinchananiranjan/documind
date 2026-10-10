@@ -83,7 +83,8 @@ class HaystackHybridRetriever:
             count += 1
 
         if haystack_docs:
-            self.doc_store.write_documents(haystack_docs)
+            from haystack.document_stores.types import DuplicatePolicy
+            self.doc_store.write_documents(haystack_docs, policy=DuplicatePolicy.OVERWRITE)
             logger.info(f"[HAYSTACK RETRIEVER] Indexed {len(haystack_docs)} chunks into Haystack DocumentStore.")
 
         return count

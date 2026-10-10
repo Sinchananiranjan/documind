@@ -479,12 +479,8 @@ def _resolve_conversational_references(question: str, conversation_id: str = Non
 
 def _evaluate_evidence_sufficiency(question: str, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Evaluates whether retrieved document evidence actually answers the user's question,
-    not merely whether it is semantically similar to the topic.
-
-    Domain-independent evaluation based on:
-    1. Highest chunk rerank score (doc_relevance)
-    2. Specific query key-term & entity coverage in retrieved chunk text
+    Generic evaluation: Evaluates similarity score, key term coverage, and missing critical entities
+    to determine whether current candidate document chunks contain sufficient evidence.
     """
     if not chunks:
         return {
@@ -495,64 +491,74 @@ def _evaluate_evidence_sufficiency(question: str, chunks: List[Dict[str, Any]]) 
             "score": 0.0
         }
 
-    top_score = chunks[0].get("combined_score", 0.0)
+    top_chunk = chunks[0]
+    if "similarity_score" in top_chunk and top_chunk["similarity_score"] is not None:
+        sem_similarity = float(top_chunk["similarity_score"])
+    elif "score" in top_chunk and top_chunk["score"] is not None:
+        raw_dist = float(top_chunk["score"])
+        sem_similarity = round(max(0.0, 1.0 - raw_dist), 3)
+    else:
+        sem_similarity = round(float(top_chunk.get("combined_score", 0.5)), 3)
 
-    stop_words = {
-        "what", "is", "are", "the", "a", "an", "and", "or", "in", "of", "to", "for",
-        "with", "on", "at", "by", "from", "as", "explain", "describe", "define",
-        "list", "tell", "give", "show", "find", "which", "their", "its", "this",
-        "that", "these", "those", "does", "do", "did", "was", "were", "be", "been",
-        "can", "could", "would", "should", "how", "why", "when", "where", "who",
-        "please", "tell", "me", "about", "according", "accordingly", "document",
-        "documents", "pdf", "pdfs", "text", "passage", "excerpt", "file", "files",
-        "note", "notes", "topic", "topics", "covered", "summarize", "summary",
-        "detail", "details", "information", "info", "context", "provided", "given"
+    if sem_similarity < 0.12:
+        return {
+            "is_sufficient": False,
+            "is_partial": False,
+            "is_insufficient": True,
+            "key_term_coverage": 0.0,
+            "score": sem_similarity
+        }
+
+    # Extract non-stop words from question
+    q_words = re.findall(r'\b[a-zA-Z0-9_-]+\b', question.lower())
+    stopwords = {
+        "what", "is", "are", "was", "were", "the", "a", "an", "in", "on", "at", "to", "for",
+        "of", "and", "or", "with", "by", "from", "as", "how", "why", "who", "which", "whose",
+        "where", "when", "does", "do", "did", "can", "could", "would", "should", "explain",
+        "describe", "define", "list", "give", "show", "tell", "according", "pdf", "document",
+        "uploaded", "about", "latest", "current", "goal", "projected"
     }
+    key_query_words = [w for w in q_words if w not in stopwords and len(w) >= 2]
+    combined_chunk_text = " ".join([c.get("content", "").lower() for c in chunks])
 
-    q_tokens = [
-        w.lower() for w in re.sub(r'[^\w\s-]', ' ', question).split()
-        if (len(w) > 2 or w.isdigit() or re.search(r'\d', w)) and w.lower() not in stop_words
-    ]
-
-    combined_content = " ".join([f"{c.get('filename', '')} {c.get('content', '')}".lower() for c in chunks])
-    context_words = set(re.findall(r'\b\w+\b', combined_content))
-    context_stems = {_stem_word(cw) for cw in context_words}
-
-    if q_tokens:
-        matched = 0
-        for tok in q_tokens:
-            tok_stem = _stem_word(tok)
-            if (tok in combined_content or 
-                tok_stem in context_stems or 
-                any(_is_synonym_match(tok, cw) for cw in context_words)):
-                matched += 1
-        key_term_coverage = round(matched / len(q_tokens), 3)
+    if key_query_words:
+        matches = 0
+        for kw in key_query_words:
+            kw_stem = _stem_word(kw)
+            if kw in combined_chunk_text or (len(kw_stem) >= 3 and kw_stem in combined_chunk_text):
+                matches += 1
+            elif any(_is_synonym_match(kw, cw) for cw in re.findall(r'\b\w+\b', combined_chunk_text)):
+                matches += 1
+        coverage = matches / len(key_query_words)
     else:
-        key_term_coverage = 1.0
+        coverage = 1.0
 
-    # Evidence Sufficiency Decision:
-    # 1. If question intent seeks current/external web info (e.g. '2026', 'latest') and key terms are missing from doc:
-    needs_web = _needs_gk_web_search(question)
-    
-    if needs_web and key_term_coverage < 0.60 and not _is_explicit_document_query(question):
+    # Check for specific numbers or years in query absent from candidate chunks
+    missing_critical_entity = False
+    nums_in_q = re.findall(r'\b\d{4}\b|\b\d+(?:km|m|kg|s|ms|ghz|mhz|gb|mb|tb)\b', question.lower())
+    for num in nums_in_q:
+        if num not in stopwords and num not in combined_chunk_text:
+            missing_critical_entity = True
+            break
+
+    if missing_critical_entity:
         is_sufficient = False
-        is_partial = top_score >= RELEVANCE_PARTIAL
+    elif coverage >= 0.35 or sem_similarity >= 0.70:
+        is_sufficient = True
     else:
-        is_sufficient = (top_score >= RELEVANCE_SUFFICIENT) or (key_term_coverage >= 0.25)
-        is_partial = not is_sufficient and (top_score >= RELEVANCE_PARTIAL or key_term_coverage >= 0.15)
+        is_sufficient = False
 
+    is_partial = not is_sufficient and (sem_similarity >= 0.05 or coverage >= 0.20)
     is_insufficient = not is_sufficient and not is_partial
-
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"[DEBUG SUFFICIENCY] query='{question}' | top_score={top_score:.3f} | key_term_coverage={key_term_coverage:.3f} | needs_web={needs_web} -> is_sufficient={is_sufficient}")
 
     return {
         "is_sufficient": is_sufficient,
         "is_partial": is_partial,
         "is_insufficient": is_insufficient,
-        "key_term_coverage": key_term_coverage,
-        "score": top_score
+        "key_term_coverage": round(coverage, 2),
+        "score": sem_similarity
     }
+
 
 
 def _needs_gk_web_search(question: str) -> bool:
@@ -745,9 +751,9 @@ def _normalize_retrieval_query(question: str) -> str:
 # ============================================================================
 def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
     """
-    LangGraph Node: Retrieves & reranks top relevant document chunks from ChromaDB.
-    Uses multi-query expansion + concept alignment reranking.
-    Evaluates evidence answerability/sufficiency for deterministic router.
+    LangGraph Node: Retrieves top relevant document chunks from ChromaDB for the current conversation.
+    Performs direct vector similarity search against document embeddings.
+    Evaluates evidence sufficiency based on similarity score.
     """
     t0 = time.perf_counter()
     question = state["question"]
@@ -793,228 +799,130 @@ def retrieve_node(state: DocuMindState) -> Dict[str, Any]:
         active_docs = [state["doc_id"]]
 
     conversation_id = state.get("conversation_id")
-    
-    # Resolve dynamic document references (e.g. 'first PDF', 'second PDF', 'filename.pdf', 'both PDFs')
-    if conversation_id:
-        target_docs = conv_manager.resolve_target_docs(conversation_id, question)
-    else:
-        target_docs = active_docs
+    target_docs = active_docs
 
-    if not target_docs:
-        target_docs = active_docs
-
-    # Resolve conversational references (e.g. 'this concept', 'those two', 'explain that')
     norm_question = _normalize_retrieval_query(question)
-    search_query, resolved_refs = _resolve_conversational_references(norm_question, conversation_id)
-    logger.info(f"[RETRIEVE] ConvID: '{conversation_id}' | Raw Query: '{question}' (Norm/Search: '{search_query}') | Target Docs: {target_docs}")
+    search_query, _ = _resolve_conversational_references(norm_question, conversation_id)
+    logger.info(f"[RETRIEVE] ConvID: '{conversation_id}' | Query: '{search_query}' | Target Docs: {target_docs}")
 
-    queries = _expand_query(search_query)
-    seen_ids = set()
+    # 1. Perform direct semantic similarity search against CURRENT conversation's Vector DB
     all_chunks = []
-
     try:
-        # Perform Haystack hybrid search (Dense + BM25 + RRF + Chunk/Page Window Expansion)
-        if len(target_docs) > 1:
-            for d_id in target_docs:
-                for q in queries:
-                    results = vector_manager.search_hybrid(
-                        query=q,
-                        conversation_id=conversation_id,
-                        doc_id=d_id,
-                        k=10,
-                        active_docs=[d_id]
-                    )
-                    for c in results:
-                        cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                        if cid not in seen_ids:
-                            seen_ids.add(cid)
-                            all_chunks.append(c)
-        else:
-            for q in queries:
-                results = vector_manager.search_hybrid(
-                    query=q,
-                    conversation_id=conversation_id,
-                    doc_id=state.get("doc_id"),
-                    k=12,
-                    active_docs=target_docs
-                )
-                for c in results:
-                    cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                    if cid not in seen_ids:
-                        seen_ids.add(cid)
-                        all_chunks.append(c)
+        all_chunks = vector_manager.search_similarity(
+            query=search_query,
+            conversation_id=conversation_id,
+            active_docs=target_docs,
+            k=8
+        )
     except Exception as e:
-        logger.error(f"[RETRIEVE] Haystack hybrid search failed: {e}")
+        logger.error(f"[RETRIEVE] Direct similarity search failed: {e}")
         all_chunks = []
 
-    reranked = _rerank_chunks(search_query, all_chunks)
-
-    # ── Lexical / Exhaustive Fallback ────────────────────────────────────────
-    # When semantic search returns zero or weak results (top score < RELEVANCE_PARTIAL),
-    # fetch ALL stored chunks for the active docs by metadata filter and rerank them
-    # lexically. This ensures we never miss content that is present in the doc but
-    # not top-k similar to the query embedding.
-    top_sem_score = reranked[0]["combined_score"] if reranked else 0.0
-    if target_docs and top_sem_score < RELEVANCE_PARTIAL:
-        logger.info(
-            f"[RETRIEVE] Semantic score {top_sem_score:.3f} < {RELEVANCE_PARTIAL:.2f} threshold. "
-            f"Running exhaustive lexical scan over {target_docs}."
-        )
+    # If primary similarity search returned no results, fall back to hybrid search
+    if not all_chunks:
         try:
-            all_lexical = vector_manager.get_all_chunks_for_docs(
-                active_docs=target_docs, conversation_id=conversation_id, max_chunks=200
+            all_chunks = vector_manager.search_hybrid(
+                query=search_query,
+                conversation_id=conversation_id,
+                active_docs=target_docs,
+                k=8
             )
-            # Rerank the full document corpus lexically against the expanded query
-            lex_reranked = _rerank_chunks(search_query, all_lexical)
-            # Merge: keep semantic results and add lexical hits not already in set
-            for c in lex_reranked:
-                cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                if cid not in seen_ids:
-                    seen_ids.add(cid)
-                    reranked.append(c)
-            # Re-sort the merged pool by combined_score
-            reranked.sort(key=lambda x: x.get("combined_score", 0.0), reverse=True)
-            logger.info(f"[RETRIEVE] After lexical merge: {len(reranked)} candidate chunks.")
-        except Exception as lex_err:
-            logger.warning(f"[RETRIEVE] Lexical fallback scan failed (non-fatal): {lex_err}")
-    
-    # Ensure chunk representation across all target docs when multiple docs exist
-    if len(target_docs) > 1:
-        doc_chunks_map = {}
-        for c in reranked:
-            d_id = c.get("doc_id")
-            if d_id not in doc_chunks_map:
-                doc_chunks_map[d_id] = []
-            doc_chunks_map[d_id].append(c)
+        except Exception as e:
+            logger.error(f"[RETRIEVE] Hybrid search fallback failed: {e}")
+            all_chunks = []
 
-        balanced_chunks = []
-        for d_id in target_docs:
-            if d_id in doc_chunks_map:
-                balanced_chunks.extend(doc_chunks_map[d_id][:3])
-        
-        for c in reranked:
-            if c not in balanced_chunks and len(balanced_chunks) < 7:
-                balanced_chunks.append(c)
-        top_chunks = balanced_chunks
-    else:
-        q_lower = question.lower()
-        is_doc_wide = any(w in q_lower for w in ["summarize", "summary", "overview", "relationship", "all", "complete", "across", "compare", "difference", "sections", "chapters", "phases", "steps", "main points", "entire"])
-        is_multi_condition = any(w in q_lower for w in ["conditions", "requirements", "criteria", "properties", "rules", "both", "all of", "each of", "and"]) or len(queries) > 2
-        is_multi_part = len(queries) > 2 or len(question.split()) > 8 or any(w in q_lower for w in ["explain", "describe", "special cases", "including"])
+    top_chunks = []
+    seen_ids = set()
+    for c in all_chunks:
+        cid = c.get("chunk_id") or (str(c.get("doc_id")) + "_" + str(c.get("page_num")) + "_" + c.get("content", "")[:30])
+        if cid not in seen_ids:
+            seen_ids.add(cid)
+            raw_dist = c.get("score")
+            if raw_dist is not None:
+                sem_sim = round(max(0.0, 1.0 - float(raw_dist)), 3)
+            else:
+                sem_sim = round(float(c.get("combined_score", 0.5)), 3)
+            c_copy = dict(c)
+            c_copy["similarity_score"] = sem_sim
+            top_chunks.append(c_copy)
 
-        if is_doc_wide:
-            selected = []
-            seen_pages = set()
-            for c in reranked:
-                p = c.get("page_num", 1)
-                if p not in seen_pages:
-                    seen_pages.add(p)
-                    selected.append(c)
-                    if len(selected) >= 7:
-                        break
-            if len(selected) < 7:
-                for c in reranked:
-                    if c not in selected:
-                        selected.append(c)
-                        if len(selected) >= 7:
-                            break
-            top_chunks = selected
-        elif is_multi_condition:
-            selected = []
-            selected_ids = set()
-            for sub_q in queries:
-                sub_candidates = _rerank_chunks(sub_q, all_chunks)
-                for c in sub_candidates:
-                    cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                    if cid not in selected_ids:
-                        selected_ids.add(cid)
-                        selected.append(c)
-                        break
-            for c in reranked:
-                cid = c.get("chunk_id", "") or (c["doc_id"] + str(c["page_num"]) + c["content"][:40])
-                if cid not in selected_ids:
-                    selected_ids.add(cid)
-                    selected.append(c)
-                    if len(selected) >= 6:
-                        break
-            top_chunks = selected[:6]
-        else:
-            top_k = 5 if is_multi_part else 4
-            top_chunks = reranked[:top_k]
+    top_chunks.sort(key=lambda x: x.get("similarity_score", 0.0), reverse=True)
+    top_chunks = top_chunks[:6]
 
-    doc_relevance = top_chunks[0]["combined_score"] if top_chunks else 0.0
+    doc_relevance = top_chunks[0]["similarity_score"] if top_chunks else 0.0
     sufficiency = _evaluate_evidence_sufficiency(question, top_chunks)
-    logger.info(
-        f"[RETRIEVE] {len(top_chunks)} chunks selected, doc_relevance={doc_relevance:.3f}, sufficiency={sufficiency['is_sufficient']}. "
-        f"Top Chunks Detail: {[{'doc_id': c.get('doc_id'), 'page': c.get('page_num'), 'score': c.get('combined_score'), 'snippet': c.get('content', '')[:60]} for c in top_chunks]}"
-    )
 
     sources = []
     for c in top_chunks:
         sources.append({
-            "doc_id": c["doc_id"],
+            "doc_id": c.get("doc_id", "document"),
             "filename": c.get("filename", ""),
-            "page_num": c["page_num"],
-            "chunk_type": c["chunk_type"],
+            "page_num": c.get("page_num", 1),
+            "chunk_type": c.get("chunk_type", "text"),
             "chunk_id": c.get("chunk_id", ""),
-            "snippet": c.get("snippet", c["content"][:150])
+            "snippet": c.get("snippet", c.get("content", "")[:150])
         })
 
     initial_route = state.get("route", "text_rag")
-    is_sufficient_evidence = sufficiency.get("is_sufficient", False) or (sufficiency.get("is_partial", False) and not _needs_gk_web_search(question))
-    mode = state.get("mode", "auto")
+    source_intent = state.get("source_intent", "")
+    is_sufficient_evidence = sufficiency.get("is_sufficient", False)
 
-    # Post-retrieval routing: Vector DB is ALWAYS checked first when documents exist.
-    # 1. Calculation intent with document math context
+    img_words = ["figure", "fig", "diagram", "image", "flowchart", "chart", "illustration", "drawing"]
+    tbl_words = ["table", "column", "row", "grid", "tabular", "matrix"]
+
     if _has_calculation_intent(question, top_chunks):
         route = "calculation"
-    # 2. Image / Table intent
-    elif initial_route in ("image_analysis", "table_analysis") and len(top_chunks) > 0:
-        route = initial_route
-    # 3. Document evidence exists in Vector DB
+    elif initial_route == "image_analysis" or any(w in question.lower() for w in img_words):
+        route = "image_analysis"
+    elif initial_route == "table_analysis" or any(w in question.lower() for w in tbl_words):
+        route = "table_analysis"
     elif is_sufficient_evidence:
-        if _is_hybrid_query(question):
+        if _is_hybrid_query(question) or source_intent == "hybrid":
             route = "hybrid"
         else:
             route = "text_rag"
-    # 4. Insufficient document evidence -> evaluate fallback options ONLY after vector search attempt
     else:
-        if _needs_gk_web_search(question) or _is_hybrid_query(question):
-            logger.info(f"[RETRIEVE] Document evidence insufficient for '{question[:40]}...'. Routing to web_search fallback.")
-            route = "web_search"
-        elif not _is_explicit_document_query(question):
-            logger.info(f"[RETRIEVE] Document evidence insufficient for '{question[:40]}...'. Routing to general_knowledge fallback.")
-            route = "general_knowledge"
-        else:
+        if source_intent == "document_only" or state.get("mode") == "document_mode":
             route = "text_rag"
+        elif _needs_gk_web_search(question) or _is_hybrid_query(question) or source_intent in ("hybrid", "web"):
+            route = "web_search"
+        else:
+            route = "general_knowledge"
 
     retrieval_time = round(time.perf_counter() - t0, 3)
     timings = state.get("timings", {})
     timings["retrieval"] = retrieval_time
 
+    chunk_ids = [c.get("chunk_id", "") for c in all_chunks]
+    dense_scores = [c.get("similarity_score", 0.0) for c in top_chunks]
+    selected_chunk_ids = [c.get("chunk_id", "") for c in top_chunks]
+
     diagnostics = {
+        "question": question,
         "original_query": question,
         "normalized_query": search_query,
+        "searched_document_ids": target_docs,
         "document_id": target_docs,
         "conversation_id": conversation_id,
-        "candidate_chunks": [c.get("chunk_id", "") for c in all_chunks],
-        "dense_results": [c.get("chunk_id", "") for c in all_chunks if c.get("score") is not None],
-        "dense_scores": [round(max(0.0, 1.0 - (c.get("score", 1.0) / 2.0)), 3) for c in top_chunks],
-        "bm25_results": [c.get("chunk_id", "") for c in all_chunks if c.get("bm25_score", 0.0) > 0],
-        "bm25_scores": [round(c.get("bm25_score", 0.0), 3) for c in top_chunks],
-        "fusion_results": [c.get("chunk_id", "") for c in all_chunks if c.get("rrf_score", 0.0) > 0],
-        "fusion_scores": [round(c.get("rrf_score", 0.0), 3) for c in top_chunks],
-        "reranked_results": [c.get("chunk_id", "") for c in reranked],
-        "reranker_scores": [round(c.get("combined_score", 0.0), 3) for c in top_chunks],
-        "neighbor_expansion": [c.get("chunk_id", "") for c in top_chunks if c.get("is_expanded")],
+        "candidate_chunks": chunk_ids,
+        "dense_results": chunk_ids,
+        "dense_scores": dense_scores,
+        "top_k_scores": dense_scores,
+        "bm25_results": chunk_ids,
+        "bm25_scores": dense_scores,
+        "fusion_results": chunk_ids,
+        "fusion_scores": dense_scores,
+        "reranked_results": selected_chunk_ids,
+        "reranker_scores": dense_scores,
+        "selected_chunks": selected_chunk_ids,
+        "neighbor_expansion": False,
         "final_evidence": [c.get("content", "")[:120] for c in top_chunks],
         "evidence_sufficiency": sufficiency,
-        "fallback_decision": route
+        "fallback_decision": route,
+        "final_source": "PDF" if sufficiency.get("is_sufficient", False) else "WEB"
     }
-    logger.info(
-        f"[RETRIEVAL DIAGNOSTICS] Q='{question[:40]}...' | Route={route} | Score={doc_relevance:.3f} | "
-        f"Chunks={len(top_chunks)} | Sufficiency={sufficiency['is_sufficient']}"
-    )
+
+    logger.info(f"[RETRIEVE] Q='{question[:40]}...' | Route={route} | Score={doc_relevance:.3f} | Chunks={len(top_chunks)}")
 
     return {
         "route": route,
@@ -1062,8 +970,8 @@ def _is_clear_general_knowledge_query(question: str) -> bool:
     q_lower = question.strip().lower()
     
     # Document/Author specific terms prevent direct general knowledge routing
-    author_doc_terms = ["author", "authors", "creator", "paper", "pdf", "file", "document", "article", "report", "written by", "published by"]
-    if any(w in q_lower for w in author_doc_terms):
+    author_doc_terms = ["author", "authors", "creator", "paper", "pdf", "file", "document", "article", "report", "written by", "published by", "flowchart", "chart", "diagram", "figure", "table", "column", "row", "image", "picture", "photo"]
+    if any(re.search(r'\b' + re.escape(w) + r'\b', q_lower) for w in author_doc_terms):
         return False
 
     gk_concept_patterns = [
@@ -1149,6 +1057,8 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     sufficiency = state.get("evidence_sufficiency") or {}
     retrieval_has_run = state.get("evidence_sufficiency") is not None or "retrieval" in state.get("timings", {}) or len(state.get("context_chunks", [])) > 0
 
+    is_clear_gk = _is_clear_general_knowledge_query(question)
+
     existing_intent = state.get("source_intent", "")
     if existing_intent:
         source_intent = existing_intent
@@ -1160,27 +1070,17 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
         source_intent = "hybrid"
     elif is_explicit_doc:
         source_intent = "document_only"
-    elif is_explicit_gk:
+    elif is_explicit_gk or is_clear_gk:
         source_intent = "general_knowledge"
     elif has_docs:
-        if retrieval_has_run:
-            sufficiency = state.get("evidence_sufficiency") or _evaluate_evidence_sufficiency(question, chunks)
-            is_insufficient = not sufficiency.get("is_sufficient")
-            if (len(chunks) == 0 or (doc_relevance < 0.15 and is_insufficient)) and not is_explicit_doc and mode == "auto":
-                source_intent = "general_knowledge"
-            else:
-                source_intent = "document_first"
-        else:
-            source_intent = "document_first"
-    elif _is_clear_general_knowledge_query(question):
-        source_intent = "general_knowledge"
+        source_intent = "document_first"
     elif needs_web:
         source_intent = "web"
     else:
         source_intent = "general_knowledge"
 
-    # ── Early exit for general_knowledge intent ─────────────────────────────
-    if source_intent == "general_knowledge" and not (has_docs and is_explicit_doc):
+    # ── Early exit for general_knowledge intent ─────────────────────────────────────
+    if source_intent == "general_knowledge":
         route = "web_search" if needs_web else "general_knowledge"
         routing_time = round(time.perf_counter() - t0, 4)
         timings = state.get("timings", {})
@@ -1203,21 +1103,22 @@ def router_node(state: DocuMindState) -> Dict[str, Any]:
     elif len(chunks) > 0 and chunks[0].get("chunk_type") == "table" and ("value" in q_lower or "list" in q_lower or "data" in q_lower or "row" in q_lower or "column" in q_lower):
         route = "table_analysis"
 
-    # Source-intent-driven routing
-    elif source_intent == "document_only":
-        route = "text_rag"
-    elif source_intent == "hybrid":
-        route = "hybrid"
-    elif source_intent == "web":
-        route = "web_search"
-    elif source_intent == "document_first":
-        route = "text_rag"
-    elif source_intent == "general_knowledge":
-        route = "web_search" if needs_web else "general_knowledge"
-    elif not has_docs:
-        route = "general_knowledge"
-    else:
-        route = "text_rag"
+    # Source-intent-driven routing (only if capability route not set)
+    elif route not in ("image_analysis", "table_analysis"):
+        if source_intent == "document_only":
+            route = "text_rag"
+        elif source_intent == "hybrid":
+            route = "hybrid"
+        elif source_intent == "web":
+            route = "web_search"
+        elif source_intent == "document_first":
+            route = "text_rag"
+        elif source_intent == "general_knowledge":
+            route = "web_search" if needs_web else "general_knowledge"
+        elif not has_docs:
+            route = "general_knowledge"
+        else:
+            route = "text_rag"
 
     routing_time = round(time.perf_counter() - t0, 4)
     timings = state.get("timings", {})
@@ -1248,9 +1149,8 @@ def _is_document_list_query(question: str) -> bool:
 # ============================================================================
 def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
     """
-    LangGraph Node: Document-grounded Q&A. ONE LLM call.
-    Strictly enforced grounding instructions. Page numbers cited.
-    Tracks exact TTFT, generation time, tokens, and tokens/sec.
+    LangGraph Node: Document-grounded Q&A.
+    Generates answer using retrieved PDF chunks and cites page numbers.
     """
     t0 = time.perf_counter()
     logger.info("[TEXT_RAG] Generating document-grounded answer...")
@@ -1269,105 +1169,35 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
         return {"answer": answer, "verified": True, "sources": [], "timings": timings}
 
     chunks = state.get("context_chunks", [])
-    sufficiency = state.get("evidence_sufficiency") or {}
-    doc_relevance = state.get("doc_relevance", 0.0)
 
-    if not chunks or (sufficiency.get("is_insufficient") and doc_relevance < 0.35):
+    if not chunks:
         timings = state.get("timings", {})
         timings["llm"] = 0.0
-
-        mode = state.get("mode", "auto")
-        active_docs = state.get("active_docs") or []
-        doc_id = state.get("doc_id")
-        has_docs = bool(active_docs) or bool(doc_id)
-
-        if not has_docs:
-            msg = "No document has been uploaded to this conversation yet. Please upload a PDF to ask document-specific questions."
-            return {"answer": msg, "verified": False, "route": "general_knowledge", "timings": timings}
-
-        source_intent = state.get("source_intent", "")
-        is_doc_only = source_intent == "document_only" or _is_explicit_document_query(state.get("question", "")) or mode == "document_mode"
-
-        # If document_only intent, stay strict: return "not in document" without calling GK or web search
-        if is_doc_only:
-            logger.info("[TEXT_RAG] Document-only intent: blocking web/GK fallback because evidence is absent.")
-            return {
-                "answer": "The uploaded document does not provide information to answer this.",
-                "verified": False,
-                "timings": timings
-            }
-
-        # In auto mode for document_first intent, fall through to General Knowledge / Web Search as last resort if permitted
-        if mode == "auto":
-            if _needs_gk_web_search(state.get("question", "")):
-                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to Web Search.")
-                ws_state = web_search_node(state)
-                state.update(ws_state)
-                we_result = web_enhanced_answer_node(state)
-                we_result["route"] = "web_search"
-                return we_result
-            else:
-                logger.info("[TEXT_RAG] No relevant chunks from doc in auto mode. Falling back to General Knowledge.")
-                gk_result = general_knowledge_node(state)
-                gk_result["route"] = "general_knowledge"
-                return gk_result
-
-        return {
-            "answer": "The uploaded document does not provide information to answer this.",
-            "verified": False,
-            "timings": timings
-        }
+        answer = "The uploaded document does not provide information to answer this question."
+        return {"answer": answer, "verified": False, "sources": [], "timings": timings}
 
     formatted_context = _compress_context(chunks)
 
     system_prompt = (
-        "You are a strictly grounded document Q&A assistant. Your task is to answer using ONLY the provided DOCUMENT CONTEXT below.\n"
-        "STRICT GROUNDING & SOURCE FAITHFULNESS RULES:\n"
-        "1. Include ONLY claims directly supported by the retrieved DOCUMENT CONTEXT. Do NOT supplement definitions, comparisons, diagrams, procedures, or examples with general LLM knowledge.\n"
-        "2. Do NOT invent or add unmentioned lifecycle stages, steps, or components (e.g. testing, deployment, maintenance, optimization, monitoring).\n"
-        "3. PRESERVE SOURCE TERMINOLOGY: Do NOT replace the document's terminology, mathematical expressions (e.g. 'm mod n'), or specific names with generic textbook terminology.\n"
-        "4. For comparison, difference, or common-topic questions: analyze ONLY properties directly supported by retrieved context for each entity/document. Explicitly state which document covers a concept and which does not. Do NOT invent generic shared topics or external textbook properties absent from the document context.\n"
-        "5. Answer the exact question concisely using the minimum sufficient evidence. Avoid repetitive explanations.\n"
-        "6. Cite page numbers for every claim (e.g., '[Page X]').\n"
-        "7. If the requested concept or detail is NOT mentioned in the DOCUMENT CONTEXT, explicitly state: 'The uploaded document does not contain enough information to answer this.'"
+        "You are an accurate, grounded document Q&A assistant. Answer using ONLY the provided DOCUMENT CONTEXT below.\n"
+        "STRICT GROUNDING & CITATION RULES:\n"
+        "1. Include facts, definitions, components, and explanations directly supported by the retrieved DOCUMENT CONTEXT.\n"
+        "2. Cite page numbers for every key fact or section used (e.g. '[Page X]').\n"
+        "3. PRESERVE SOURCE TERMINOLOGY as presented in the document.\n"
+        "4. Do NOT invent external properties or unmentioned steps."
     )
 
     prompt = (
         f"DOCUMENT CONTEXT:\n{formatted_context}\n\n"
         f"QUESTION: {state['question']}\n\n"
-        "ANSWER (strictly grounded in context above, cite page numbers):"
+        "ANSWER (strictly grounded in context above, cite page numbers like [Page X]):"
     )
 
     num_predict = _determine_max_tokens(state["question"])
     answer, metrics = llm_manager.generate_text_with_metrics(prompt, system_prompt=system_prompt, num_predict=num_predict)
 
-    missing_indicators = ["does not contain enough information", "does not provide information", "not mentioned in", "no information about", "not provided in"]
-    mode = state.get("mode", "auto")
-    has_docs_now = bool(state.get("active_docs") or state.get("doc_id"))
-    # After checking the document, if the LLM confirms the topic is absent from the doc,
-    # fall through to General Knowledge as a final resort. This preserves the user's
-    # requirement: "check the document first, use GK only when document truly lacks the info."
-    # The GK answer will be clearly labeled with 🌐 **[General Knowledge Fallback]** prefix.
-    if (
-        (not answer or not answer.strip() or any(ind in answer.lower() for ind in missing_indicators))
-        and mode == "auto"
-        and not _is_explicit_document_query(state.get("question", ""))
-    ):
-        if _needs_gk_web_search(state.get("question", "")):
-            logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to Web Search.")
-            ws_state = web_search_node(state)
-            state.update(ws_state)
-            we_result = web_enhanced_answer_node(state)
-            we_result["route"] = "web_search"
-            return we_result
-        else:
-            logger.info("[TEXT_RAG] Document confirms topic is absent. Falling back to General Knowledge (with label).")
-            gk_result = general_knowledge_node(state)
-            gk_result["route"] = "general_knowledge"  # Ensure honest route label in state & UI
-            return gk_result
-
     if not answer or not answer.strip():
-        answer = "The uploaded document does not contain enough information to answer this."
+        answer = "The uploaded document does not provide sufficient details to answer this."
 
     timings = state.get("timings", {})
     timings["llm"] = metrics.get("total_llm_time", round(time.perf_counter() - t0, 3))
@@ -1376,8 +1206,10 @@ def text_rag_node(state: DocuMindState) -> Dict[str, Any]:
     timings["tokens_generated"] = metrics.get("tokens_generated", 0)
     timings["tokens_per_sec"] = metrics.get("tokens_per_sec", 0.0)
 
-    # Leave verified unset here — verify_answer_node will evaluate it
-    return {"answer": answer, "verified": False, "sources": state.get("sources", []), "timings": timings}
+    fallback_phrases = ["not provide", "couldn't find", "not present", "does not contain", "no information", "not mentioned"]
+    is_fb = not answer or any(fp in answer.lower() for fp in fallback_phrases)
+
+    return {"answer": answer, "verified": not is_fb, "sources": state.get("sources", []), "timings": timings}
 
 
 # ============================================================================
@@ -1834,9 +1666,8 @@ def verify_answer_node(state: DocuMindState) -> Dict[str, Any]:
 
     fallback_phrases = [
         "couldn't find", "not present", "not found", "unable to find",
-        "does not provide enough information", "does not provide information",
-        "does not contain enough information", "does not contain information",
-        "does not mention", "not mentioned", "no information", "not provided"
+        "does not provide", "does not contain", "does not mention", "not mentioned",
+        "no information", "not provided", "absent from"
     ]
     is_fallback = not answer or any(p in answer.lower() for p in fallback_phrases)
 

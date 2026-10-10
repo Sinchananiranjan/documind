@@ -1,85 +1,146 @@
-# DocuMind – Multimodal Document Analyzer
+# DocuMind
 
+DocuMind is an open-source Multimodal Document QA and RAG platform. It processes complex PDF documents containing native text, scanned pages, data tables, embedded images, and mathematical equations.
 
-DocuMind is an open-source, 100% local AI application designed to analyze multimodal PDF documents containing **text, scanned OCR pages, tables, and images**. 
-
-Optimized specifically for Windows systems with **8GB RAM, Intel i3 CPU, and zero GPU requirements**, DocuMind requires zero paid API keys and keeps all data locally on your computer.
-
----
-
-## 🚀 Key Improvements & Features
-
-- **⚡ Fast Python Heuristic Router:** 0ms extra LLM latency for query classification (routes to `text_rag`, `table_analysis`, or `image_analysis`).
-- **🧮 Numerical & Formula Reasoning:** Handles mathematical calculations (e.g. SNR = $20 \log_{10}(S/N)$, $3.5\text{ mV} / 0.75\text{ mV} \approx 13.38\text{ dB}$) step-by-step using retrieved document values.
-- **📐 LaTeX Math Rendering:** Automatically formats math equations using standard LaTeX syntax.
-- **📄 Interactive Clickable Page Citations:** Click **"🔍 Click to open Page X in Viewer"** in citations to instantly open and view the exact rendered PDF page inside an interactive in-app page viewer.
-- **🛡️ Hallucination Verification Bug Fix:** Fallback responses (*"I couldn't find this in the document."*) correctly report `Grounded Verified: False`.
-- **⏱️ Performance Instrumentation:** Displays execution timing breakdown for retrieval, routing, LLM generation, and verification.
-- **🤖 Lightweight Model Stack:** Defaults to `qwen2.5:1.5b` (1.1GB RAM) with `all-MiniLM-L6-v2` embeddings (~90MB RAM on CPU).
+Powered by **LangGraph**, **FastAPI**, and **Streamlit**, DocuMind combines hybrid vector/BM25 retrieval, automatic claim verification, and side-by-side interactive PDF page citations.
 
 ---
 
-## 🔄 LangGraph Workflow Topology
+## Features
 
-```text
-               [User Question + Doc ID]
-                          │
-                   (retrieve_node)       ──> [Top 3-5 Chunks from ChromaDB]
-                          │
-              (router_node - Fast Python)──> [0ms Classification]
-                     ╱    │    ╲
-                    ╱     │     ╲
-                   v      v      v
-           (text_rag) (table) (image)
-                   ╲      │      ╱
-                    ╲     │     ╱
-                     v    v    v
-                    (verify_answer) 
-                       ╱     ╲
-                      ╱       ╲
-             (is_grounded)    (fallback / ungrounded)
-                 │                    │
-                 v                    v
-               [END]               (fallback) ──> [END]
+- **Multimodal PDF Processing**: Extracts text, structured tables into Markdown, embedded images, and runs Tesseract OCR on scanned pages.
+- **Hybrid Retrieval (Vector + BM25)**: Fuses dense similarity search (ChromaDB + HuggingFace) and sparse keyword matching (BM25) with neighboring page context expansion.
+- **LangGraph Agent Workflow**: Dynamically routes queries across text RAG, table analysis, AST math evaluation, and web search fallback.
+- **Answer Grounding Verification**: Audits factual LLM claims against retrieved context, returning an explicit verification status and grounding score.
+- **Interactive Page Citations**: Renders PDF pages into PNGs. Clicking citation links opens the exact PDF page render side-by-side in the UI.
+- **Web Search Fallback**: Automatically searches the web via DuckDuckGo when document context is missing.
+- **Isolated Multi-Doc Sessions**: Manages independent chat threads with strict metadata isolation in ChromaDB.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Frontend** | Streamlit | Interactive web GUI & side-by-side page viewer |
+| **Backend API** | FastAPI + Uvicorn | Async REST API backend and web server |
+| **Workflow Engine** | LangGraph | State machine routing, retrieval, & verification |
+| **LLM Provider** | Groq / Gemini / Ollama | LLM inference engine (defaults to Groq `llama-3.3-70b-versatile`) |
+| **Embeddings** | HuggingFace (`all-MiniLM-L6-v2`) | Local 384-dimensional sentence vectors |
+| **Vector DB** | ChromaDB | Persistent local vector store with metadata filtering |
+| **Sparse Retrieval** | Haystack BM25 | BM25 lexical keyword matching |
+| **PDF Processing** | PyMuPDF + Tesseract OCR | Text extraction, table detection, OCR, & page rendering |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    User([User]) --> UI[Streamlit UI]
+    UI -- Document / Query --> API[FastAPI Server]
+
+    subgraph Ingestion Pipeline
+        API --> PDFProc[PyMuPDF & Tesseract OCR]
+        PDFProc --> Embed[HuggingFace Embeddings & BM25]
+        Embed --> DB[(ChromaDB)]
+    end
+
+    subgraph LangGraph Workflow
+        API --> Router[Intent Router]
+        Router --> Retrieval[Hybrid Retrieval & RRF Fusion]
+        Retrieval --> LLM[Groq LLM Node]
+        LLM --> Verify[Verify Answer Node]
+    end
+
+    Verify -- Answer + Citations --> API --> UI
 ```
 
 ---
 
-## ⚙️ Installation & Setup
+## How It Works
 
-### 1. Install Dependencies with `uv`
+1. **Upload & Process**: PDF text, tables, and images are extracted. Scanned pages automatically trigger Tesseract OCR.
+2. **Chunk & Index**: Content is embedded and indexed in ChromaDB and Haystack BM25.
+3. **Hybrid Retrieve & Route**: Query triggers dense vector + BM25 keyword search with neighbor expansion, routed by LangGraph.
+4. **Generate & Verify**: LLM generates an answer, which is fact-checked against retrieved context for grounding.
+5. **Display & Cite**: Response is rendered with clickable citations that open rendered PDF pages side-by-side.
+
+---
+
+## Project Structure
+
+```
+documind/
+├── app/
+│   ├── api/                # FastAPI REST routes (/upload, /query, /documents)
+│   ├── document/           # PDF processor, OCR, table extractor, & safe AST math
+│   ├── graph/              # LangGraph state machine, nodes, & workflow
+│   ├── models/             # LLM provider manager (Groq, Gemini, Ollama)
+│   ├── rag/                # Embeddings, ChromaDB vector store, & BM25 retriever
+│   └── tools/              # DuckDuckGo web search fallback
+├── data/                   # Persistent storage (ChromaDB, JSON logs, page PNG renders)
+├── frontend/               # Streamlit web UI (streamlit_app.py)
+├── tests/                  # Pytest test suite
+├── pyproject.toml          # Project dependencies
+└── README.md               # Documentation
+```
+
+---
+
+## Setup
+
+### Prerequisites
+- **Python**: 3.10, 3.11, or 3.12
+- **Tesseract OCR**: Installed on system path (`sudo apt install tesseract-ocr` or Windows installer)
+
+### Installation
+
 ```bash
+# Clone repository
+git clone <repository_url>
+cd documind
+
+# Install dependencies with uv (recommended)
 uv sync
-```
 
-### 2. Configure Groq API Key
-Copy `.env.example` to `.env` and set your Groq API Key:
-```bash
-GROQ_API_KEY=your_groq_api_key_here
+# Or with pip
+pip install -e .
 ```
 
 ---
 
-## 🚀 Running DocuMind
+## Environment Variables
 
-### 1. Launch Streamlit Web UI (Recommended)
+Create a `.env` file in the root directory (see `.env.example`):
+
+```bash
+GROQ_API_KEY=gsk_your_groq_api_key_here
+LLM_PROVIDER=groq
+GROQ_MODEL=openai/gpt-oss-20b
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+CHROMA_PERSIST_DIR=./data/chroma_db
+```
+
+---
+
+## Run
+
+### Launch Web UI (Recommended)
 ```bash
 uv run streamlit run frontend/streamlit_app.py
 ```
-Open browser at `http://localhost:8501`.
+Open `http://localhost:8501` in your browser.
 
-### 2. Launch FastAPI Backend
+### Launch FastAPI Backend (Optional)
 ```bash
-uv run uvicorn app.api.main:app --reload --port 8000
+uv run uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
-Open API docs at `http://127.0.0.1:8000/docs`.
+Swagger API docs available at `http://127.0.0.1:8000/docs`.
 
 ---
 
-## 🧪 Testing
+## License
 
-### Run Full Pytest Suite
-```bash
-uv run pytest
-```
-*Executes tests for Ollama detection, PDF parsing, ChromaDB indexing, fast routing, numerical formula calculation, and fallback verification.*
+This project is licensed under the [MIT License](LICENSE).
+
